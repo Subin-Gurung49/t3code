@@ -1,7 +1,12 @@
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { primaryQuotaWindow, quotaCountdown, quotaPace } from "./ThreadUsageLimits.logic";
+import {
+  antigravityQuotaGroups,
+  primaryQuotaWindow,
+  quotaCountdown,
+  quotaPace,
+} from "./ThreadUsageLimits.logic";
 
 const now = Date.parse("2026-10-24T12:00:00.000Z");
 const weekly: ServerProviderUsageWindow = {
@@ -14,6 +19,59 @@ const weekly: ServerProviderUsageWindow = {
 };
 
 describe("quota summaries", () => {
+  it("keeps Gemini allowances separate and excludes unavailable Claude/GPT models", () => {
+    const sharedWeekly: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "3p-weekly",
+      label: "Claude & GPT (shared) · Weekly",
+      usedPercent: 60,
+    };
+    const geminiWeekly: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "gemini-weekly",
+      label: "Gemini · Weekly",
+      usedPercent: 15,
+    };
+    const geminiSession: ServerProviderUsageWindow = {
+      ...geminiWeekly,
+      id: "gemini-5h",
+      label: "Gemini · 5-hour",
+      kind: "session",
+      windowDurationMins: 300,
+    };
+    const argonWeekly: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "gemini-argon-wtu-weekly",
+      label: "Gemini 4 Argon · Weekly",
+      usedPercent: 80,
+    };
+    expect(
+      antigravityQuotaGroups([
+        sharedWeekly,
+        geminiWeekly,
+        geminiSession,
+        argonWeekly,
+        { ...sharedWeekly, id: "claude-weekly", label: "Claude · Weekly" },
+        { ...sharedWeekly, id: "gpt-weekly", label: "GPT · Weekly" },
+      ]),
+    ).toEqual([
+      { label: "Gemini 4 Argon", windows: [argonWeekly] },
+      { label: "Gemini", windows: [geminiSession, geminiWeekly] },
+    ]);
+    expect(antigravityQuotaGroups([sharedWeekly])).toEqual([]);
+  });
+
+  it("preserves Antigravity quotas whose reset cadence is not reported", () => {
+    const reported: ServerProviderUsageWindow = {
+      id: "gemini-quota",
+      label: "Gemini · Reported quota",
+      kind: "other",
+      usedPercent: 25,
+    };
+    expect(antigravityQuotaGroups([reported])).toEqual([{ label: "Gemini", windows: [reported] }]);
+    expect(antigravityQuotaGroups([])).toEqual([]);
+  });
+
   it("prioritizes the monthly Go allowance and the weekly Codex allowance", () => {
     const session: ServerProviderUsageWindow = { ...weekly, id: "session", kind: "session" };
     const monthly: ServerProviderUsageWindow = { ...weekly, id: "monthly", kind: "monthly" };
