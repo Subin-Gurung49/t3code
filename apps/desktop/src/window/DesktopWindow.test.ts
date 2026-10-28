@@ -66,10 +66,13 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const setPermissionRequestHandler = vi.fn();
+  const setPermissionCheckHandler = vi.fn();
   let zoomLevel = 0;
   const webContents = {
     copyImageAt: vi.fn(),
     focus: vi.fn(),
+    id: 1,
     isDestroyed: vi.fn(() => false),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
@@ -91,8 +94,8 @@ function makeFakeBrowserWindow() {
     setWindowOpenHandler: vi.fn(),
     toggleDevTools: vi.fn(),
     session: {
-      setPermissionRequestHandler: vi.fn(),
-      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler,
+      setPermissionCheckHandler,
     },
   };
 
@@ -147,6 +150,8 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    setPermissionRequestHandler,
+    setPermissionCheckHandler,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -505,6 +510,95 @@ describe("DesktopWindow", () => {
           assert.equal(yield* Ref.get(createCount), 3);
         }).pipe(Effect.provide(layer));
       }),
+  );
+
+  it.effect("allows clipboard writes only in the main window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const requestHandler = fakeWindow.setPermissionRequestHandler.mock.calls[0]?.[0] as Exclude<
+          Parameters<Electron.Session["setPermissionRequestHandler"]>[0],
+          null
+        >;
+        const checkHandler = fakeWindow.setPermissionCheckHandler.mock.calls[0]?.[0] as Exclude<
+          Parameters<Electron.Session["setPermissionCheckHandler"]>[0],
+          null
+        >;
+        assert.isFunction(requestHandler);
+        assert.isFunction(checkHandler);
+
+        const requestDecision = (
+          webContents: Electron.WebContents,
+          permission: Parameters<typeof requestHandler>[1],
+          details: Readonly<Record<string, unknown>>,
+        ): boolean => {
+          let granted: boolean | undefined;
+          requestHandler(
+            webContents,
+            permission,
+            (value) => {
+              granted = value;
+            },
+            details as unknown as Parameters<typeof requestHandler>[3],
+          );
+          assert.isDefined(granted);
+          return granted;
+        };
+
+        const mainWebContents = fakeWindow.window.webContents;
+        const secondaryWebContents = { id: 2 } as Electron.WebContents;
+        const checkDecision = (
+          webContents: Electron.WebContents,
+          permission: Parameters<typeof checkHandler>[1],
+          details: Readonly<Record<string, unknown>>,
+        ): boolean =>
+          checkHandler(
+            webContents,
+            permission,
+            "t3code://app",
+            details as unknown as Parameters<typeof checkHandler>[3],
+          );
+
+        assert.isTrue(requestDecision(mainWebContents, "clipboard-sanitized-write", {}));
+        assert.isTrue(
+          checkDecision(mainWebContents, "clipboard-sanitized-write", { isMainFrame: true }),
+        );
+        assert.isFalse(requestDecision(secondaryWebContents, "clipboard-sanitized-write", {}));
+        assert.isFalse(
+          checkDecision(secondaryWebContents, "clipboard-sanitized-write", {
+            isMainFrame: true,
+          }),
+        );
+        assert.isTrue(requestDecision(mainWebContents, "media", { mediaTypes: ["audio"] }));
+        assert.isFalse(requestDecision(mainWebContents, "media", { mediaTypes: ["video"] }));
+        assert.isFalse(
+          requestDecision(mainWebContents, "media", { mediaTypes: ["audio", "video"] }),
+        );
+        assert.isTrue(
+          checkDecision(mainWebContents, "media", { isMainFrame: true, mediaType: "audio" }),
+        );
+        assert.isFalse(
+          checkDecision(mainWebContents, "media", { isMainFrame: true, mediaType: "video" }),
+        );
+        assert.isFalse(requestDecision(mainWebContents, "notifications", {}));
+        assert.isFalse(
+          checkDecision(mainWebContents, "notifications", {
+            isMainFrame: true,
+          }),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
