@@ -79,7 +79,6 @@ function createTestLayers(options: {
         : options.threadNotFound
           ? Effect.fail(
               new Orchestrator.OrchestratorProjectionError({
-                operation: "getThreadSnapshotWindow",
                 threadId,
                 cause: new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }),
               }),
