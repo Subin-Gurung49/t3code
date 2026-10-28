@@ -409,6 +409,10 @@ export const make = Effect.gen(function* () {
       mainWindowSession.setPermissionRequestHandler(
         (webContents, permission, callback, details) => {
           if (webContents.id === window.webContents.id) {
+            if (permission === "clipboard-sanitized-write") {
+              callback(true);
+              return;
+            }
             if (permission === "media") {
               const mediaTypes =
                 "mediaTypes" in details && Array.isArray(details.mediaTypes)
@@ -423,7 +427,13 @@ export const make = Effect.gen(function* () {
         },
       );
       mainWindowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
-        if (webContents?.id === window.webContents.id && permission === "media") {
+        if (webContents?.id !== window.webContents.id) {
+          return false;
+        }
+        if (permission === "clipboard-sanitized-write") {
+          return true;
+        }
+        if (permission === "media") {
           return details.mediaType === undefined || details.mediaType === "audio";
         }
         return false;
