@@ -2253,7 +2253,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSoftwareKeyboardOpen,
       planModeUiEnabled,
       isLiteralPendingAnswer,
-      dictation,
       pendingUserInputs,
       promptHistoryMessages,
       promptHistoryPositionRef,

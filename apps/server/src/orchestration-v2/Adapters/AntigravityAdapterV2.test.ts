@@ -178,6 +178,7 @@ describe("AntigravityAdapterV2 interrupt recovery", () => {
           );
         },
         withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
         defaultModel: Effect.succeed(undefined),
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -328,6 +329,7 @@ describe("AntigravityAdapterV2 token usage", () => {
               })),
             ),
           withProcess: (_stop, task) => task,
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
           defaultModel: Effect.succeed(undefined),
         });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({

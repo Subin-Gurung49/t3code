@@ -60,7 +60,6 @@ export function useVoiceInputController(input: {
         },
         captured.selection,
         captured.subscribeToDraftChanges,
-        captured.transcriber,
       ),
       label: captured.label,
     });

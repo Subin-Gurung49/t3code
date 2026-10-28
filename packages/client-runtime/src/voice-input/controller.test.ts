@@ -105,6 +105,18 @@ describe("resolveTranscriptCommit", () => {
       kind: "stale",
     });
   });
+
+  it("inserts spacing around words when appending in English", () => {
+    const captured = draft({
+      text: "original prompt",
+      selection: { start: 15, end: 15 },
+    });
+    expect(resolveTranscriptCommit(captured, captured, "spoken text", "en-US")).toEqual({
+      kind: "commit",
+      text: "original prompt spoken text",
+      selection: { start: 27, end: 27 },
+    });
+  });
 });
 
 describe("VoiceInputController", () => {
