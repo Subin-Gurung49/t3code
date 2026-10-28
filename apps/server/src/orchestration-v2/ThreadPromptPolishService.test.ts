@@ -16,6 +16,8 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadPromptPolishService from "./ThreadPromptPolishService.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const projectId = ProjectId.make("project:polish-test");
 const threadId = ThreadId.make("thread:polish-test");
@@ -27,6 +29,7 @@ const codexModelSelection = {
 function createTestLayers(options: {
   readonly settings?: Partial<ServerSettingsType>;
   readonly rejectHistoryRead?: boolean;
+  readonly threadNotFound?: boolean;
   readonly providerInstance?: any;
   readonly threadRecords?: {
     thread?: { projectId: ProjectId; worktreePath: string | null };
@@ -73,18 +76,26 @@ function createTestLayers(options: {
     getThreadSnapshotWindow: () =>
       options.rejectHistoryRead
         ? Effect.die("Fresh drafts must not load server thread history")
-        : Effect.succeed({
-            projection: {
-              thread: {
-                id: threadId,
-                projectId,
-                worktreePath: "/some/repo/worktree",
-                ...options.threadRecords?.thread,
+        : options.threadNotFound
+          ? Effect.fail(
+              new Orchestrator.OrchestratorProjectionError({
+                operation: "getThreadSnapshotWindow",
+                threadId,
+                cause: new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }),
+              }),
+            )
+          : Effect.succeed({
+              projection: {
+                thread: {
+                  id: threadId,
+                  projectId,
+                  worktreePath: "/some/repo/worktree",
+                  ...options.threadRecords?.thread,
+                },
+                messages: options.threadRecords?.messages ?? [],
               },
-              messages: options.threadRecords?.messages ?? [],
-            },
-            snapshotSequence: 1,
-          } as any),
+              snapshotSequence: 1,
+            } as any),
   });
 
   const layerTextGen = Layer.mock(TextGeneration.TextGeneration)({
@@ -254,6 +265,34 @@ describe("ThreadPromptPolishService", () => {
       Effect.provide(
         createTestLayers({
           rejectHistoryRead: true,
+          generatePromptPolish: (input) => {
+            capturedInput = input;
+            return Effect.succeed({ polished: "Polished prompt text" });
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("polishes a draft when threadId is a missing draft thread without history", () => {
+    let capturedInput: any;
+
+    return Effect.gen(function* () {
+      const polishService = yield* ThreadPromptPolishService.ThreadPromptPolishService;
+      const res = yield* polishService.polish({
+        threadId,
+        draft: "implement mobile polish",
+      });
+
+      assert.strictEqual(res.polished, "Polished prompt text");
+      assert.isDefined(capturedInput);
+      assert.isUndefined(capturedInput.threadContext);
+      assert.strictEqual(capturedInput.cwd, "/tmp/t3-polish-prompt-isolated");
+      assert.strictEqual(capturedInput.draft, "implement mobile polish");
+    }).pipe(
+      Effect.provide(
+        createTestLayers({
+          threadNotFound: true,
           generatePromptPolish: (input) => {
             capturedInput = input;
             return Effect.succeed({ polished: "Polished prompt text" });
