@@ -30,6 +30,9 @@ export class ThreadPromptPolishService extends Context.Service<
 
 const MAX_POLISH_CONTEXT_CHARS = 8_000;
 const RECENT_MESSAGE_COUNT = 6;
+const isProjectionStoreThreadNotFoundError = Schema.is(
+  ProjectionStore.ProjectionStoreThreadNotFoundError,
+);
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -145,11 +148,12 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           // Older mobile clients send a draft ID before the server creates the thread.
-          Effect.catchTag("OrchestratorProjectionError", (error) =>
-            Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError)(error.cause)
-              ? Effect.succeed(null)
-              : Effect.fail(error),
-          ),
+          Effect.catchTags({
+            OrchestratorProjectionError: (error) =>
+              isProjectionStoreThreadNotFoundError(error.cause)
+                ? Effect.succeed(null)
+                : Effect.fail(error),
+          }),
           Effect.mapError(
             (cause) =>
               new TextGenerationError({

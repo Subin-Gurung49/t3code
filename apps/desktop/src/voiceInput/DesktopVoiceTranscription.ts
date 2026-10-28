@@ -228,8 +228,8 @@ export function makeVoiceTranscriptionManager(options: VoiceTranscriptionManager
     function* () {
       const platform = yield* HostProcess.Platform;
       if (platform === "darwin") {
-        return yield* Effect.try({
-          try: () => {
+        return yield* Effect.sync((): DesktopVoiceInputMicrophoneStatus => {
+          try {
             const status = Electron.systemPreferences.getMediaAccessStatus("microphone");
             if (
               status === "not-determined" ||
@@ -240,8 +240,9 @@ export function makeVoiceTranscriptionManager(options: VoiceTranscriptionManager
               return status;
             }
             return "unknown";
-          },
-          catch: () => "unknown" as const,
+          } catch {
+            return "unknown";
+          }
         });
       }
       return "granted";
@@ -252,10 +253,9 @@ export function makeVoiceTranscriptionManager(options: VoiceTranscriptionManager
     function* () {
       const platform = yield* HostProcess.Platform;
       if (platform === "darwin") {
-        return yield* Effect.tryPromise({
-          try: () => Electron.systemPreferences.askForMediaAccess("microphone"),
-          catch: () => false,
-        });
+        return yield* Effect.promise(() =>
+          Electron.systemPreferences.askForMediaAccess("microphone").catch(() => false),
+        );
       }
       return true;
     },
