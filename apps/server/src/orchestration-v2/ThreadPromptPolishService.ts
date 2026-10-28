@@ -13,7 +13,6 @@ import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitation
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import * as ServerSettings from "../serverSettings.ts";
-import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";

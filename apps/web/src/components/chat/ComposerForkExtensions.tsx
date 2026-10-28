@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ComposerDictationBar, ComposerDictationButton } from "./ComposerDictationBar";
+import { ComposerDictationBar } from "./ComposerDictationBar";
 import { ComposerPolishBar } from "./ComposerPolishBar";
 import type { useComposerDictation } from "./useComposerDictation";
 import type { useComposerPolish } from "./useComposerPolish";
