@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import {
   type PolishPromptInput,
   type PolishPromptResult,
@@ -12,6 +13,8 @@ import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitation
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -141,6 +144,12 @@ const make = Effect.gen(function* () {
           userTurnLimit: RECENT_MESSAGE_COUNT,
         })
         .pipe(
+          // Older mobile clients send a draft ID before the server creates the thread.
+          Effect.catchTag("OrchestratorProjectionError", (error) =>
+            Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError)(error.cause)
+              ? Effect.succeed(null)
+              : Effect.fail(error),
+          ),
           Effect.mapError(
             (cause) =>
               new TextGenerationError({
@@ -151,7 +160,7 @@ const make = Effect.gen(function* () {
           ),
         );
 
-      const recentMessages = historySnapshot.projection.messages
+      const recentMessages = (historySnapshot?.projection.messages ?? [])
         .filter((msg) => !msg.streaming && (msg.role === "user" || msg.role === "assistant"))
         .slice(-RECENT_MESSAGE_COUNT);
 
