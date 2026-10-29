@@ -13,9 +13,8 @@ import {
   type LimitAccount,
 } from "@t3tools/shared/usageLimits";
 import {
-  antigravityQuotaGroups,
   deepSeekPricingPeriod,
-  primaryQuotaWindow,
+  quotaCardModel,
   quotaCountdown,
   quotaPace,
 } from "@t3tools/shared/usageQuotaCards";
@@ -183,17 +182,10 @@ function AccountQuotaCard({
   readonly showIdentity: boolean;
   readonly now: number;
 }) {
-  const primary = primaryQuotaWindow(account.limits.windows);
-  if (primary === null) return null;
-  const isAntigravity = account.driver === "antigravity";
-  const isOpenCodeGo = account.driver === "opencode" && primary.id.startsWith("go_");
-  const supporting = account.limits.windows.filter((window) => window !== primary);
-  const summaryOnly = supporting.length > 0 && (account.driver === "codex" || isOpenCodeGo);
-  const barWindows = summaryOnly ? supporting : [primary, ...supporting];
-  const windowGroups = isAntigravity
-    ? antigravityQuotaGroups(account.limits.windows)
-    : [{ label: null, windows: barWindows }];
-  if (windowGroups.length === 0) return null;
+  const model = quotaCardModel(account.driver, account.limits.windows);
+  if (model === null) return null;
+  const { primary, isAntigravity, isOpenCodeGo } = model;
+  if (model.groups.length === 0) return null;
   const name =
     account.driver === "codex"
       ? "ChatGPT (Codex)"
@@ -264,11 +256,9 @@ function AccountQuotaCard({
         )}
       </div>
       <div className="flex min-w-0 flex-col gap-2.5">
-        {windowGroups.map((group) => {
-          const groupPrimary = group.label === null ? null : primaryQuotaWindow(group.windows);
-          const windows = isAntigravity
-            ? group.windows.filter((window) => window.kind !== "weekly")
-            : group.windows;
+        {model.groups.map((group) => {
+          const groupPrimary = group.primary;
+          const windows = group.windows;
           return (
             <div
               key={group.label ?? "quota"}

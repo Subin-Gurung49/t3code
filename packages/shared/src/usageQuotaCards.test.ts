@@ -1,10 +1,11 @@
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderUsageWindow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   antigravityQuotaGroups,
   deepSeekPricingPeriod,
   primaryQuotaWindow,
+  quotaCardModel,
   quotaCountdown,
   quotaPace,
 } from "./usageQuotaCards.ts";
@@ -117,6 +118,55 @@ describe("quota summaries", () => {
     expect(primaryQuotaWindow([session, weekly, monthly])).toBe(monthly);
     expect(primaryQuotaWindow([session, weekly])).toBe(weekly);
     expect(primaryQuotaWindow([])).toBeNull();
+  });
+
+  it("keeps the primary Codex and OpenCode Go allowance out of the bars", () => {
+    const session: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "session",
+      kind: "session",
+    };
+    const monthly: ServerProviderUsageWindow = { ...weekly, id: "go_monthly", kind: "monthly" };
+
+    expect(quotaCardModel(ProviderDriverKind.make("codex"), [session, weekly])).toMatchObject({
+      primary: weekly,
+      isOpenCodeGo: false,
+      groups: [{ label: null, primary: null, windows: [session] }],
+    });
+    expect(
+      quotaCardModel(ProviderDriverKind.make("opencode"), [session, weekly, monthly]),
+    ).toMatchObject({
+      primary: monthly,
+      isOpenCodeGo: true,
+      groups: [{ label: null, primary: null, windows: [session, weekly] }],
+    });
+    expect(quotaCardModel(ProviderDriverKind.make("claudeAgent"), [session, weekly])).toMatchObject(
+      {
+        groups: [{ windows: [weekly, session] }],
+      },
+    );
+  });
+
+  it("groups Antigravity model bars without repeating their weekly headline quotas", () => {
+    const geminiSession: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "gemini-5h",
+      kind: "session",
+      label: "Gemini · 5-hour",
+    };
+    const geminiWeekly: ServerProviderUsageWindow = {
+      ...weekly,
+      id: "gemini-weekly",
+      label: "Gemini · Weekly",
+    };
+
+    expect(
+      quotaCardModel(ProviderDriverKind.make("antigravity"), [geminiWeekly, geminiSession]),
+    ).toMatchObject({
+      primary: geminiWeekly,
+      isAntigravity: true,
+      groups: [{ label: "Gemini", primary: geminiWeekly, windows: [geminiSession] }],
+    });
   });
 
   it("compares usage to elapsed quota time and divides remaining allowance across remaining days", () => {

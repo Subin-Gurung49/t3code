@@ -1,4 +1,4 @@
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { elapsedShare } from "./usageLimits.ts";
 
@@ -73,6 +73,44 @@ export function primaryQuotaWindow(windows: readonly ServerProviderUsageWindow[]
     windows[0] ??
     null
   );
+}
+
+export interface QuotaCardGroup {
+  readonly label: string | null;
+  readonly primary: ServerProviderUsageWindow | null;
+  readonly windows: readonly ServerProviderUsageWindow[];
+}
+
+export interface QuotaCardModel {
+  readonly primary: ServerProviderUsageWindow;
+  readonly isAntigravity: boolean;
+  readonly isOpenCodeGo: boolean;
+  readonly groups: readonly QuotaCardGroup[];
+}
+
+/**
+ * The compact card shows one headline allowance for Codex and OpenCode Go.
+ * Their other allowances stay visible as bars instead of repeating the headline.
+ */
+export function quotaCardModel(
+  driver: ServerProvider["driver"],
+  windows: readonly ServerProviderUsageWindow[],
+): QuotaCardModel | null {
+  const primary = primaryQuotaWindow(windows);
+  if (primary === null) return null;
+  const isAntigravity = driver === "antigravity";
+  const isOpenCodeGo = driver === "opencode" && primary.id.startsWith("go_");
+  const supporting = windows.filter((window) => window !== primary);
+  const summaryOnly = supporting.length > 0 && (driver === "codex" || isOpenCodeGo);
+  const barWindows = summaryOnly ? supporting : [primary, ...supporting];
+  const groups = isAntigravity
+    ? antigravityQuotaGroups(windows).map((group) => ({
+        ...group,
+        primary: primaryQuotaWindow(group.windows),
+        windows: group.windows.filter((window) => window.kind !== "weekly"),
+      }))
+    : [{ label: null, primary: null, windows: barWindows }];
+  return { primary, isAntigravity, isOpenCodeGo, groups };
 }
 
 export function quotaPace(window: ServerProviderUsageWindow, now: number) {
