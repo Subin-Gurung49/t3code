@@ -1,32 +1,19 @@
-import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ServerProviderUsageWindow,
-  UsageProviderKind,
-} from "@t3tools/contracts";
-import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
+import type { ServerProviderUsageWindow, UsageProviderKind } from "@t3tools/contracts";
+import type { LimitAccount } from "@t3tools/shared/usageLimits";
 import {
-  antigravityQuotaGroups,
   deepSeekPricingPeriod,
-  primaryQuotaWindow,
+  quotaCardModel,
   quotaCountdown,
   quotaPace,
 } from "@t3tools/shared/usageQuotaCards";
-import { View } from "react-native";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { environmentPresentations } from "../../state/presentation";
-import { usageProviderKind, useProviderColors } from "./usageProviders";
-
-const PROVIDER_NAMES: Readonly<Record<string, string>> = {
-  codex: "ChatGPT (Codex)",
-  claudeAgent: "Claude Code",
-  antigravity: "Antigravity",
-  cursor: "Cursor",
-  grok: "Grok Build",
-};
+import { ResetCredits } from "./UsageLimitsSection";
+import { PROVIDER_LABEL, usageProviderKind, useProviderColors } from "./usageProviders";
 
 function shortWindowLabel(window: ServerProviderUsageWindow) {
   if (window.kind === "session") {
@@ -38,15 +25,34 @@ function shortWindowLabel(window: ServerProviderUsageWindow) {
   return window.label;
 }
 
-function accountName(account: LimitAccount) {
-  if (account.driver === "codex") return PROVIDER_NAMES.codex;
-  if (
-    account.driver === "opencode" &&
-    account.limits.windows.some((window) => window.id.startsWith("go_"))
-  ) {
-    return "OpenCode Go";
+function accountName(account: LimitAccount, isOpenCodeGo: boolean) {
+  if (account.driver === "codex") return "ChatGPT (Codex)";
+  if (isOpenCodeGo) return "OpenCode Go";
+  const kind = usageProviderKind(account.driver);
+  return kind ? PROVIDER_LABEL[kind] : String(account.driver);
+}
+
+function AccountIdentity({ account }: { readonly account: LimitAccount }) {
+  const [revealed, setRevealed] = useState(false);
+  if (account.email) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+        onPress={() => setRevealed((value) => !value)}
+        className="self-start active:opacity-60"
+      >
+        <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
+          {revealed ? account.email : "••••••@••••••"}
+        </Text>
+      </Pressable>
+    );
   }
-  return account.displayName ?? PROVIDER_NAMES[account.driver] ?? String(account.driver);
+  return account.displayName ? (
+    <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
+      {account.displayName}
+    </Text>
+  ) : null;
 }
 
 function windowColor(
@@ -186,21 +192,21 @@ function QuotaWindowRow({
 
 function AccountQuotaCard({
   account,
+  showIdentity,
   now,
+  colors,
 }: {
   readonly account: LimitAccount;
+  readonly showIdentity: boolean;
   readonly now: number;
+  readonly colors: Readonly<Record<UsageProviderKind, string>>;
 }) {
-  const colors = useProviderColors();
-  const primary = primaryQuotaWindow(account.limits.windows);
-  if (primary === null) return null;
-  const isAntigravity = account.driver === "antigravity";
-  const isOpenCodeGo = account.driver === "opencode" && primary.id.startsWith("go_");
-  const groups = isAntigravity
-    ? antigravityQuotaGroups(account.limits.windows)
-    : [{ label: null, windows: account.limits.windows }];
-  if (groups.length === 0) return null;
-  const name = accountName(account);
+  const model = quotaCardModel(account.driver, account.limits.windows);
+  if (model === null || model.groups.length === 0) return null;
+  const { primary, isAntigravity, isOpenCodeGo, groups } = model;
+  const redeem = account.redeem;
+  const resetCredits = account.limits.resetCredits;
+  const name = accountName(account, isOpenCodeGo);
   const period =
     primary.kind === "monthly"
       ? "Monthly quota"
@@ -246,6 +252,7 @@ function AccountQuotaCard({
                     : "Check pricing"}
               </Text>
             ) : null}
+            {showIdentity ? <AccountIdentity account={account} /> : null}
           </View>
         </View>
         {isAntigravity ? (
@@ -258,10 +265,8 @@ function AccountQuotaCard({
       </View>
       <View className="gap-2.5">
         {groups.map((group, groupIndex) => {
-          const groupPrimary = group.label === null ? null : primaryQuotaWindow(group.windows);
-          const windows = isAntigravity
-            ? group.windows.filter((window) => window.kind !== "weekly")
-            : group.windows;
+          const groupPrimary = group.primary;
+          const windows = group.windows;
           return (
             <View
               key={group.label ?? "quota"}
@@ -293,28 +298,43 @@ function AccountQuotaCard({
         })}
       </View>
       {isAntigravity ? null : <QuotaFooter window={primary} now={now} />}
+      {redeem && resetCredits && resetCredits.availableCount > 0 ? (
+        <View className="border-t border-border-subtle pt-3">
+          <ResetCredits
+            environmentId={redeem.environmentId}
+            input={redeem.input}
+            credits={resetCredits}
+            now={now}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
 
 export function AccountQuotaCards({
-  selectedEnvironmentIds,
+  accounts,
   now,
 }: {
-  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly accounts: readonly LimitAccount[];
   readonly now: number;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const selected =
-    selectedEnvironmentIds === null
-      ? presentations
-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  const accounts = collectLimitAccounts(selected);
+  const colors = useProviderColors();
   if (accounts.length === 0) return null;
+  const driverCounts = new Map<string, number>();
+  for (const account of accounts) {
+    driverCounts.set(account.driver, (driverCounts.get(account.driver) ?? 0) + 1);
+  }
   return (
-    <View className="gap-3">
+    <View className="w-full max-w-[720px] self-center gap-3">
       {accounts.map((account) => (
-        <AccountQuotaCard key={account.key} account={account} now={now} />
+        <AccountQuotaCard
+          key={account.key}
+          account={account}
+          showIdentity={(driverCounts.get(account.driver) ?? 0) > 1}
+          now={now}
+          colors={colors}
+        />
       ))}
     </View>
   );

@@ -61,6 +61,12 @@ const VIEW_OPTIONS = [
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageView; label: string }[];
 
+type LimitsView = "cards" | "pools";
+const LIMITS_VIEW_OPTIONS = [
+  { value: "cards", label: "Cards" },
+  { value: "pools", label: "Pools" },
+] as const satisfies readonly { value: LimitsView; label: string }[];
+
 const WINDOW_OPTIONS = [
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
@@ -98,6 +104,7 @@ function UsageScreen(props: {
   }
   const { view } = selection;
   const setView = (view: UsageView) => setSelection({ params: props.tabParam, view });
+  const [limitsView, setLimitsView] = useState<LimitsView>("cards");
   const [width, setWidth] = useState(0);
   const wide = width >= WIDE_WIDTH;
   const [windowSelection, setWindowSelection] = useState(() => ({
@@ -343,20 +350,31 @@ function UsageScreen(props: {
             className="gap-6"
           >
             {showingLimits ? (
-              <UsageLimitsSection
-                now={limits.now}
-                failedLabels={limits.failedLabels}
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                wide={wide}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={refreshAfterCursorEnable}
-                    />
-                  ) : null
-                }
-              />
+              <>
+                <SegmentedControl
+                  options={LIMITS_VIEW_OPTIONS}
+                  selected={limitsView}
+                  onSelect={setLimitsView}
+                  size="compact"
+                  role="tab"
+                  className={wide ? "w-60 self-start" : undefined}
+                />
+                <UsageLimitsSection
+                  now={limits.now}
+                  failedLabels={limits.failedLabels}
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  wide={wide}
+                  view={limitsView}
+                  cursorPrompt={
+                    cursorAccessEnvironments.length > 0 ? (
+                      <CursorEnableLimits
+                        environments={cursorAccessEnvironments}
+                        onEnabled={refreshAfterCursorEnable}
+                      />
+                    ) : null
+                  }
+                />
+              </>
             ) : (
               <>
                 {wide ? null : (
