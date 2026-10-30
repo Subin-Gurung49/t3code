@@ -34,6 +34,7 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -200,6 +201,7 @@ export function makeAntigravityAcpAdapterFlavor(
         Effect.provideService(Path.Path, options.path),
       ),
     // Loading history replays tool calls; resume avoids replay.
+    preferResumeSession: true,
     restartRuntimeAfterInterrupt: true,
     restartRuntimeOnEveryInterrupt: true,
     subagentsIdleOnTurnCompletion: true,
@@ -240,6 +242,7 @@ export function makeAntigravityAcpAdapterFlavor(
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     supportsCompaction: true,
+    requiresSignIn: isAntigravitySignInRequiredError,
   };
 }
 
