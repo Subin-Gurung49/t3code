@@ -80,10 +80,15 @@ export function ThreadDetailsCard({
     const measure = () => {
       const frame = element.closest<HTMLElement>("[data-thread-details-card]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
-      // PR lists and lineage scroll as they expand. Counting them toward density would hide
-      // the section and workspace controls when the user asks to see more rows.
+      // PR lists, lineage, side chats and usage cards scroll as they expand.
+      // Counting them toward density would hide the section and workspace controls.
       const lists = element.querySelectorAll<HTMLElement>(
-        "[data-thread-relationships-panel], [data-thread-details-pr-list], [data-thread-usage-limits]",
+        [
+          "[data-thread-relationships-panel]",
+          "[data-thread-side-chats-panel]",
+          "[data-thread-details-pr-list]",
+          "[data-thread-usage-limits]",
+        ].join(", "),
       );
       const fittingHeight =
         next - Array.from(lists).reduce((sum, list) => sum + list.offsetHeight, 0);
