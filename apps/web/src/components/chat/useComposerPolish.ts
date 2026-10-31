@@ -43,7 +43,7 @@ export function useComposerPolish(input: UseComposerPolishInput): UseComposerPol
   const polishRpc = useAtomCommand(orchestrationEnvironment.polishPrompt);
 
   const latestInput = useRef(input);
-  // oxlint-disable-next-line t3code/react-effect-budget -- prompt polish session lifecycle and rpc synchronization
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prompt polish session lifecycle and rpc synchronization
   useEffect(() => {
     latestInput.current = input;
   }, [input]);
@@ -57,7 +57,7 @@ export function useComposerPolish(input: UseComposerPolishInput): UseComposerPol
     });
   });
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- prompt polish session lifecycle and rpc synchronization
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prompt polish session lifecycle and rpc synchronization
   useEffect(() => {
     session.setPolishPrompt(async ({ draft, signal }) => {
       const { environmentId, threadId } = latestInput.current;
@@ -82,14 +82,14 @@ export function useComposerPolish(input: UseComposerPolishInput): UseComposerPol
     });
   }, [polishRpc, session]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- prompt polish session lifecycle and rpc synchronization
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prompt polish session lifecycle and rpc synchronization
   useEffect(() => {
     return () => {
       session.dispose();
     };
   }, [session]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- prompt polish session lifecycle and rpc synchronization
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prompt polish session lifecycle and rpc synchronization
   useEffect(() => {
     if (session.ownerKey !== null && session.ownerKey !== input.ownerKey) {
       session.ownerChanged(input.ownerKey);
@@ -98,7 +98,7 @@ export function useComposerPolish(input: UseComposerPolishInput): UseComposerPol
 
   const environmentId = input.environmentId;
   const prevEnv = useRef(environmentId);
-  // oxlint-disable-next-line t3code/react-effect-budget -- prompt polish session lifecycle and rpc synchronization
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prompt polish session lifecycle and rpc synchronization
   useEffect(() => {
     if (prevEnv.current !== environmentId) {
       prevEnv.current = environmentId;
