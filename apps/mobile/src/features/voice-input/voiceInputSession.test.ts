@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { PreparedVoiceTranscription } from "@t3tools/client-runtime/voice-input";
+import type {
+  PreparedVoiceTranscription,
+  VoiceTranscriber,
+} from "@t3tools/client-runtime/voice-input";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { resetVoiceInputGlobalsForTests } from "../../../../../packages/client-runtime/src/voice-input/controller";
 import {
@@ -32,8 +35,9 @@ function createTarget(
   readText: () => string | null,
   commit: VoiceInputTarget["commitDraft"],
   selection: { start: number; end: number },
+  transcriber?: VoiceTranscriber | null,
 ) {
-  return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {});
+  return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {}, transcriber);
 }
 
 function createSession(
@@ -74,6 +78,27 @@ function createSession(
 
 describe("global voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it("uses the target environment transcriber for recording and retry", async () => {
+    const { session, prepare: localPrepare } = createSession();
+    const remotePrepare = vi.fn(async (): Promise<PreparedVoiceTranscription> => ({
+      locale: "en-US",
+      transcribe: async () => "remote text",
+    }));
+    remotePrepare.mockRejectedValueOnce(new Error("prepare failed"));
+    const commit = vi.fn();
+
+    await session.start(
+      createTarget("first", () => "", commit, { start: 0, end: 0 }, { prepare: remotePrepare }),
+    );
+    expect(session.controller.currentState.phase).toBe("error");
+    await session.retry();
+    await session.controller.stop();
+
+    expect(localPrepare).not.toHaveBeenCalled();
+    expect(remotePrepare).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledWith("remote text", { start: 11, end: 11 });
+  });
 
   it.each(["retry", "takeover"])(
     "handles failed deactivation with %s without notifying a released owner",

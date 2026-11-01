@@ -23,6 +23,7 @@ const reactTests = [
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/settings/components/SettingsDragHandle.test.tsx",
+  "src/features/threads/ThreadComposer.android.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",
   "src/features/threads/UsageLimitRecoveryCard.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
@@ -37,6 +38,7 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
+  "src/features/voice-input/useVoiceInputController.android.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
