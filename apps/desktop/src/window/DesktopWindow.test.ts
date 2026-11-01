@@ -627,6 +627,8 @@ describe("DesktopWindow", () => {
           }),
         );
         assert.isTrue(requestDecision(mainWebContents, "media", { mediaTypes: ["audio"] }));
+        assert.isFalse(requestDecision(mainWebContents, "media", {}));
+        assert.isFalse(requestDecision(mainWebContents, "media", { mediaTypes: [] }));
         assert.isFalse(requestDecision(mainWebContents, "media", { mediaTypes: ["video"] }));
         assert.isFalse(
           requestDecision(mainWebContents, "media", { mediaTypes: ["audio", "video"] }),
@@ -636,6 +638,10 @@ describe("DesktopWindow", () => {
         );
         assert.isFalse(
           checkDecision(mainWebContents, "media", { isMainFrame: true, mediaType: "video" }),
+        );
+        assert.isFalse(checkDecision(mainWebContents, "media", { isMainFrame: true }));
+        assert.isFalse(
+          checkDecision(mainWebContents, "media", { isMainFrame: true, mediaType: "unknown" }),
         );
         assert.isFalse(requestDecision(mainWebContents, "notifications", {}));
         assert.isFalse(
