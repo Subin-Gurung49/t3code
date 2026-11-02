@@ -94,6 +94,7 @@ vi.mock("../../state/composer-attachment-uploads", () => ({
 vi.mock("../../state/entities", () => ({
   useProject: () => null,
   useThreadShells: () => [],
+  useVisibleThreadShells: () => [],
 }));
 vi.mock("../../state/environments", () => ({ useMentionableEnvironments: () => [] }));
 vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => [] }));

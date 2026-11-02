@@ -138,8 +138,10 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
       const groupName = group.displayName?.trim();
-      const family =
-        groupName && groupName !== "Gemini Models" && groupName !== "Claude and GPT models"
+      // Argon is metered apart from the default Gemini buckets; keep its group name.
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? groupName || "Gemini Argon"
+        : groupName && groupName !== "Gemini Models" && groupName !== "Claude and GPT models"
           ? groupName
           : bucket.bucketId.startsWith("gemini-")
             ? "Gemini"
@@ -205,7 +207,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Crypto.Crypto;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
-  const userAgent = `antigravity/hub/${QUOTA_CLIENT_VERSION} (aidev_client; os_type=${platform}; arch=${architecture})`;
+  const userAgent = `antigravity/hub/${QUOTA_CLIENT_VERSION} (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
