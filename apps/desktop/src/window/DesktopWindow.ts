@@ -426,7 +426,10 @@ export const make = Effect.gen(function* () {
                 "mediaTypes" in details && Array.isArray(details.mediaTypes)
                   ? (details.mediaTypes as ReadonlyArray<string>)
                   : undefined;
-              const isAudioOnly = !mediaTypes || mediaTypes.every((type) => type === "audio");
+              const isAudioOnly =
+                mediaTypes !== undefined &&
+                mediaTypes.length > 0 &&
+                mediaTypes.every((type) => type === "audio");
               callback(isAudioOnly);
               return;
             }
@@ -442,7 +445,7 @@ export const make = Effect.gen(function* () {
           return true;
         }
         if (permission === "media") {
-          return details.mediaType === undefined || details.mediaType === "audio";
+          return details.mediaType === "audio";
         }
         return false;
       });
