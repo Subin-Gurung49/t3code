@@ -126,6 +126,8 @@
         "@t3tools/mobile-highlights-native",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
+        // Private native dependency of expo-observe; direct so Expo autolinks it.
+        "expo-app-metrics",
         "expo-intent-launcher",
       ],
     },
