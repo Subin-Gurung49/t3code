@@ -31,6 +31,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
+  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -42,10 +43,16 @@ import {
 const decodePiSettings = Schema.decodeSync(PiSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("pi");
+const isPiNativeCommandPath = (commandPath: string) =>
+  /\/pi(?:\.exe)?$/.test(normalizeCommandPath(commandPath));
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
-  nativeUpdate: { args: ["update", "--self"] },
+  nativeUpdate: {
+    args: ["update", "--self"],
+    isCommandPath: isPiNativeCommandPath,
+    requiresCommandPath: true,
+  },
 });
 
 export type PiDriverEnv =

@@ -1,9 +1,9 @@
-import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import {
   type PolishPromptInput,
   type PolishPromptResult,
@@ -39,7 +39,7 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const secureRandom = yield* SecureRandom.SecureRandom;
 
   const polish: ThreadPromptPolishService["Service"]["polish"] = Effect.fn(
     "ThreadPromptPolishService.polish",
@@ -195,7 +195,7 @@ const make = Effect.gen(function* () {
     }
 
     const occurrences = collectComposerContextReferences(input.draft);
-    const nonce = yield* crypto.randomUUIDv4().pipe(
+    const nonce = yield* secureRandom.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new TextGenerationError({

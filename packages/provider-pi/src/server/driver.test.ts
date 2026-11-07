@@ -124,6 +124,17 @@ const create = (config: Partial<PiSettings> = {}, enabled = true) =>
   });
 
 it.layer(layerTest)("PiDriver workspace discovery", (it) => {
+  it.effect("keeps unrecognized executable paths manual-only for updates", () =>
+    Effect.gen(function* () {
+      const { spawner } = yield* makePiSpawner();
+      const instance = yield* create({ binaryPath: process.execPath }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+      assert.isNull(maintenance.update);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps each workspace's skills and commands separate from the machine catalog", () =>
     Effect.gen(function* () {
       const { spawner, launches } = yield* makePiSpawner();
