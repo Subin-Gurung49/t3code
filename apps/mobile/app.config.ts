@@ -7,6 +7,8 @@ type AppVariant = "development" | "preview" | "production";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
+// Expo's TypeScript setup otherwise installs `typescript` on every start; we typecheck with tsrs.
+process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const easProjectId = repoEnv.T3CODE_MOBILE_EAS_PROJECT_ID ?? "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
@@ -462,6 +464,9 @@ const config: ExpoConfig = {
     appVariant: APP_VARIANT,
     mobileUpdateRepository:
       repoEnv.T3CODE_MOBILE_GITHUB_RELEASE_REPOSITORY ?? "Subin-Gurung49/t3code",
+    secretsFeatureEnabled: ["1", "true"].includes(
+      process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
+    ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,

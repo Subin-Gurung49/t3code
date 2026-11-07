@@ -35,6 +35,8 @@ export type {
   PromptPolishGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
+  TranscriptionPostProcessingInput,
+  TranscriptionPostProcessingResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
 export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
@@ -47,7 +49,8 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
-  | "generatePromptPolish";
+  | "generatePromptPolish"
+  | "generateTranscriptionPostProcessing";
 
 const SAFE_POLISH_DRIVERS = new Set(["codex", "opencode"]);
 
@@ -103,12 +106,13 @@ export const make = Effect.gen(function* () {
       ),
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const limited = exhaustedUsageWindow(
-      snapshots.find((provider) => provider.instanceId === selection.instanceId),
-      now,
-      selection.model,
-    );
-    if (limited) {
+    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    // Only a failed probe counts: a pending one is also not installed yet.
+    const unusable =
+      selected?.enabled === true &&
+      selected.status === "error" &&
+      (!selected.installed || selected.auth.status === "unauthenticated");
+    if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -130,6 +134,7 @@ export const make = Effect.gen(function* () {
               resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
               provider.installed &&
               provider.auth.status !== "unauthenticated" &&
+              provider.status !== "error" &&
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
@@ -170,6 +175,16 @@ export const make = Effect.gen(function* () {
         "generatePromptPolish",
         input.modelSelection.instanceId,
       ).pipe(Effect.flatMap((textGeneration) => textGeneration.generatePromptPolish(input)));
+    }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function (input) {
+      return generate(
+        "generateTranscriptionPostProcessing",
+        input.modelSelection,
+        (service, modelSelection) =>
+          service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+      );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
       return generate(

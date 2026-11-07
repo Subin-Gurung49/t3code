@@ -409,14 +409,12 @@ export function UsageLimitsSection({
   now,
   failedLabels,
   selectedEnvironmentIds,
-  cursorPrompt,
   wide = false,
   view,
 }: {
   readonly now: number;
   readonly failedLabels: readonly string[];
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
-  readonly cursorPrompt?: ReactNode;
   readonly wide?: boolean;
   readonly view: "cards" | "pools";
 }) {
@@ -430,17 +428,11 @@ export function UsageLimitsSection({
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
   const colors = useProviderColors();
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <View className="gap-6">
       {pools.length === 0 &&
       notices.length === 0 &&
       failedLabels.length === 0 &&
-      !cursorPrompt &&
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
@@ -449,48 +441,41 @@ export function UsageLimitsSection({
         </Text>
       ) : null}
       {view === "cards" ? (
-        <>
-          <AccountQuotaCards accounts={accounts} now={now} />
-          {cursorPrompt}
-        </>
+        <AccountQuotaCards accounts={accounts} now={now} />
       ) : (
-        <>
-          {pools.map((pool, index) => {
-            const windows = displayLimitWindows(pool);
-            return (
-              <Fragment key={pool.driver}>
-                {index === cursorPromptAt ? cursorPrompt : null}
-                <View className="gap-3">
-                  <View className="flex-row items-center gap-2 px-1">
-                    <ProviderIcon provider={pool.driver} size={18} />
-                    <Text className="text-base font-t3-medium text-foreground">
-                      {DRIVER_LABEL[pool.driver] ?? pool.driver}
-                    </Text>
-                  </View>
-                  {windows.map((window) => {
-                    const details =
-                      pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-                    return (
-                      <PoolWindowCard
-                        key={`${window.kind}:${window.id}`}
-                        pool={window}
-                        color={colors[usageProviderKind(pool.driver) ?? "codex"]}
-                        now={now}
-                        environmentIds={
-                          selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
-                        }
-                        label={details?.label}
-                        description={details?.description}
-                        wide={wide}
-                      />
-                    );
-                  })}
+        pools.map((pool) => {
+          const windows = displayLimitWindows(pool);
+          return (
+            <Fragment key={pool.driver}>
+              <View className="gap-3">
+                <View className="flex-row items-center gap-2 px-1">
+                  <ProviderIcon provider={pool.driver} size={18} />
+                  <Text className="text-base font-t3-medium text-foreground">
+                    {DRIVER_LABEL[pool.driver] ?? pool.driver}
+                  </Text>
                 </View>
-              </Fragment>
-            );
-          })}
-          {cursorPromptAt === pools.length ? cursorPrompt : null}
-        </>
+                {windows.map((window) => {
+                  const details =
+                    pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+                  return (
+                    <PoolWindowCard
+                      key={`${window.kind}:${window.id}`}
+                      pool={window}
+                      color={colors[usageProviderKind(pool.driver) ?? "codex"]}
+                      now={now}
+                      environmentIds={
+                        selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
+                      }
+                      label={details?.label}
+                      description={details?.description}
+                      wide={wide}
+                    />
+                  );
+                })}
+              </View>
+            </Fragment>
+          );
+        })
       )}
       {externalLinks.map((link) => (
         <View key={link.url} className="gap-3 rounded-xl border border-border-subtle p-4">
