@@ -32,7 +32,14 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
@@ -116,6 +123,9 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import { ComposerPolishBar, ComposerPolishButton } from "./ComposerPolishBar";
+import { useMobileComposerPolish } from "./useMobileComposerPolish";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
   useThreadSettingsSheetPresentation,
@@ -578,8 +588,31 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  const canPolishPrompt = useAtomValue(
+    orchestrationEnvironment.polishPrompt.permissionAtom(props.environmentId),
+  );
+  const polish = useMobileComposerPolish({
+    ownerKey: composerDraftKey,
+    environmentId: props.environmentId,
+    threadId: props.isDraft ? null : props.selectedThread.id,
+    readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
+    onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
+    subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
+  });
+  const polishActionGenerationRef = useRef(0);
+  useLayoutEffect(() => {
+    polishActionGenerationRef.current += 1;
+    return () => {
+      polishActionGenerationRef.current += 1;
+    };
+  }, [composerDraftKey, props.environmentId, props.selectedThread.id]);
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
+  const isSubmissionLockedRef = useRef(isSubmissionLocked);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- async native editor flush must recheck the latest lock before applying a draft change
+  useLayoutEffect(() => {
+    isSubmissionLockedRef.current = isSubmissionLocked;
+  }, [isSubmissionLocked]);
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -669,7 +702,45 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onEditorFocusChange?.(false);
     setComposerEditing(false);
   };
+  const handlePolish = async () => {
+    if (isSubmissionLockedRef.current) return;
+    const actionGeneration = polishActionGenerationRef.current;
+    await inputRef.current?.flushPendingInput();
+    if (
+      isSubmissionLockedRef.current ||
+      actionGeneration !== polishActionGenerationRef.current
+    )
+      return;
+    polish.start();
+  };
+  const handleApplyPolish = async () => {
+    if (isSubmissionLockedRef.current) return;
+    const actionGeneration = polishActionGenerationRef.current;
+    await inputRef.current?.flushPendingInput();
+    if (
+      isSubmissionLockedRef.current ||
+      actionGeneration !== polishActionGenerationRef.current
+    )
+      return;
+    polish.apply();
+  };
+  const handleRestorePolish = async () => {
+    if (isSubmissionLockedRef.current) return;
+    const actionGeneration = polishActionGenerationRef.current;
+    await inputRef.current?.flushPendingInput();
+    if (
+      isSubmissionLockedRef.current ||
+      actionGeneration !== polishActionGenerationRef.current
+    )
+      return;
+    polish.restoreOriginal();
+  };
+  const handleCancelPolish = () => {
+    polishActionGenerationRef.current += 1;
+    polish.cancel();
+  };
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
+    handleCancelPolish();
     if (
       isSubmissionLocked ||
       sendBlockedReason !== null ||
@@ -891,6 +962,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             paddingVertical: surfacePaddingVertical,
           }}
         >
+          <ComposerPolishBar
+            polish={polish}
+            disabled={isSubmissionLocked}
+            onCancel={handleCancelPolish}
+            onApply={handleApplyPolish}
+            onRestoreOriginal={handleRestorePolish}
+          />
           <ComposerDictationError
             error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
             onDismiss={voiceInput.cancel}
@@ -1102,6 +1180,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   disabled={isSubmissionLocked}
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
+                />
+                <ComposerPolishButton
+                  disabled={
+                    !canPolishPrompt || isSubmissionLocked || draftMessage.trim().length === 0
+                  }
+                  isBusy={polish.isBusy}
+                  onPress={handlePolish}
                 />
                 {showStopAction ? (
                   <ComposerActionButton
