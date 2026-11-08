@@ -310,12 +310,16 @@ export function ComposerEditor({
       settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
     // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
     // event can reach JS after the tap's handler has already read the draft.
-    flushPendingInput: async () => {
+    flushPendingInput: async (shouldApplyPendingInput = () => true) => {
       const state = await Promise.resolve()
         .then(() => nativeRef.current?.readState())
         .catch(() => undefined);
       // Acknowledging past a paste JS has not received yet would get the paste rejected.
-      if (state && state.pasteEventCount <= mostRecentEventCountRef.current) {
+      if (
+        state &&
+        shouldApplyPendingInput() &&
+        state.pasteEventCount <= mostRecentEventCountRef.current
+      ) {
         applyNativeChange(state);
       }
     },

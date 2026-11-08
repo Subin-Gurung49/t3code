@@ -599,15 +599,29 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
   });
+  const isSubmissionLocked =
+    props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const polishActionGenerationRef = useRef(0);
+  const composerScopeRef = useRef<{
+    readonly ownerKey: string;
+    readonly environmentId: typeof props.environmentId;
+    readonly threadId: typeof props.selectedThread.id;
+  } | null>(null);
+  // Retire async native-editor reads when the composer scope changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pending iOS editor reads must be invalidated when their composer scope changes
   useLayoutEffect(() => {
+    const scope = {
+      ownerKey: composerDraftKey,
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+    };
+    composerScopeRef.current = scope;
     polishActionGenerationRef.current += 1;
     return () => {
+      if (composerScopeRef.current === scope) composerScopeRef.current = null;
       polishActionGenerationRef.current += 1;
     };
   }, [composerDraftKey, props.environmentId, props.selectedThread.id]);
-  const isSubmissionLocked =
-    props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const isSubmissionLockedRef = useRef(isSubmissionLocked);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- async native editor flush must recheck the latest lock before applying a draft change
   useLayoutEffect(() => {
@@ -703,10 +717,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     setComposerEditing(false);
   };
   const handlePolish = async () => {
-    if (isSubmissionLockedRef.current) return;
+    const actionScope = composerScopeRef.current;
+    if (actionScope === null || isSubmissionLockedRef.current) return;
     const actionGeneration = polishActionGenerationRef.current;
-    await inputRef.current?.flushPendingInput();
+    await inputRef.current?.flushPendingInput(() => composerScopeRef.current === actionScope);
     if (
+      composerScopeRef.current !== actionScope ||
       isSubmissionLockedRef.current ||
       actionGeneration !== polishActionGenerationRef.current
     )
@@ -714,10 +730,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     polish.start();
   };
   const handleApplyPolish = async () => {
-    if (isSubmissionLockedRef.current) return;
+    const actionScope = composerScopeRef.current;
+    if (actionScope === null || isSubmissionLockedRef.current) return;
     const actionGeneration = polishActionGenerationRef.current;
-    await inputRef.current?.flushPendingInput();
+    await inputRef.current?.flushPendingInput(() => composerScopeRef.current === actionScope);
     if (
+      composerScopeRef.current !== actionScope ||
       isSubmissionLockedRef.current ||
       actionGeneration !== polishActionGenerationRef.current
     )
@@ -725,10 +743,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     polish.apply();
   };
   const handleRestorePolish = async () => {
-    if (isSubmissionLockedRef.current) return;
+    const actionScope = composerScopeRef.current;
+    if (actionScope === null || isSubmissionLockedRef.current) return;
     const actionGeneration = polishActionGenerationRef.current;
-    await inputRef.current?.flushPendingInput();
+    await inputRef.current?.flushPendingInput(() => composerScopeRef.current === actionScope);
     if (
+      composerScopeRef.current !== actionScope ||
       isSubmissionLockedRef.current ||
       actionGeneration !== polishActionGenerationRef.current
     )

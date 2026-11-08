@@ -31,6 +31,7 @@ const native = vi.hoisted(() => ({
   resetGeneration: 0,
   pasteEventCount: 0,
   mounts: 0,
+  readStateBarrier: null as (() => Promise<void>) | null,
   props: null as NativeProps | null,
   deliver: null as ((event: NativeEvent) => void) | null,
 }));
@@ -42,13 +43,16 @@ function NativeView({ ref, ...props }: NativeProps) {
     native.mounts += 1;
   }, []);
   useImperativeHandle(ref, () => ({
-    readState: async () => ({
-      value: native.text,
-      selection: { start: native.text.length, end: native.text.length },
-      eventCount: native.eventCount,
-      resetGeneration: native.resetGeneration,
-      pasteEventCount: native.pasteEventCount,
-    }),
+    readState: async () => {
+      await native.readStateBarrier?.();
+      return {
+        value: native.text,
+        selection: { start: native.text.length, end: native.text.length },
+        eventCount: native.eventCount,
+        resetGeneration: native.resetGeneration,
+        pasteEventCount: native.pasteEventCount,
+      };
+    },
   }));
   useLayoutEffect(() => {
     propsRef.current = props;
@@ -260,6 +264,37 @@ it("sends the autocorrection the Send tap accepted, and its late event cannot re
     native.deliver!(lateCorrection);
   });
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("");
+});
+
+it("does not flush pending input after the composer scope changes", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft A"));
+  pend("Draft A corrected");
+
+  let resolveReadStarted!: () => void;
+  const readStarted = new Promise<void>((resolve) => {
+    resolveReadStarted = resolve;
+  });
+  let resolveReadState!: () => void;
+  const readState = new Promise<void>((resolve) => {
+    resolveReadState = resolve;
+  });
+  let scopeIsCurrent = true;
+  native.readStateBarrier = async () => {
+    resolveReadStarted();
+    await readState;
+  };
+  try {
+    const pendingFlush = screen.editor.current!.flushPendingInput(() => scopeIsCurrent);
+    await readStarted;
+    scopeIsCurrent = false;
+    resolveReadState();
+    await act(async () => pendingFlush);
+    expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft A");
+  } finally {
+    native.readStateBarrier = null;
+    resolveReadState();
+  }
 });
 
 it("does not flush past a paste whose event has not reached JS", async () => {
