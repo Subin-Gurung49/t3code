@@ -34,6 +34,11 @@ it.effect("restarts the periodic interval after a manual quota-source refresh", 
     );
   }).pipe(
     Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
       ServerSettings.layerTest({
         usageLimitSources: {
           [UsageLimitSourceId.make("local-hub")]: {

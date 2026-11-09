@@ -114,6 +114,20 @@ const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
   },
 ];
 
+const REMOVED_DEFAULT_KEYBINDINGS: ReadonlyArray<{
+  readonly id: string;
+  readonly rule: KeybindingRule;
+}> = [
+  {
+    id: "composer.dictate:mod+shift+d",
+    rule: {
+      key: "mod+shift+d",
+      command: "composer.dictate",
+      when: "!terminalFocus",
+    },
+  },
+];
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -447,14 +461,18 @@ const make = Effect.gen(function* () {
       const pendingLateDefaults = LATE_DEFAULT_KEYBINDINGS.filter(
         (late) => !appliedMigrationIds.has(late.id),
       );
+      const pendingRemovedDefaults = REMOVED_DEFAULT_KEYBINDINGS.filter(
+        (removed) => !appliedMigrationIds.has(removed.id),
+      );
       const configExists = yield* readConfigExists;
       if (!configExists) {
         yield* writeConfigAtomically(DEFAULT_KEYBINDINGS);
-        if (pendingLateDefaults.length > 0) {
-          yield* recordAppliedMigrations([
-            ...appliedMigrationIds,
-            ...LATE_DEFAULT_KEYBINDINGS.map((late) => late.id),
-          ]);
+        const migrationIds = [
+          ...pendingLateDefaults.map(({ id }) => id),
+          ...pendingRemovedDefaults.map(({ id }) => id),
+        ];
+        if (migrationIds.length > 0) {
+          yield* recordAppliedMigrations([...appliedMigrationIds, ...migrationIds]);
         }
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
@@ -472,7 +490,10 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const customConfig = runtimeConfig.keybindings.filter(
+        (entry) => !pendingRemovedDefaults.some(({ rule }) => isSameKeybindingRule(entry, rule)),
+      );
+      const removedDefaultCount = runtimeConfig.keybindings.length - customConfig.length;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -542,17 +563,18 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length > 0) {
+      if (defaultsToAppend.length > 0 || removedDefaultCount > 0) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),
       );
-      if (settledLateDefaults.length > 0) {
-        yield* recordAppliedMigrations([
-          ...appliedMigrationIds,
-          ...settledLateDefaults.map((late) => late.id),
-        ]);
+      const completedMigrationIds = [
+        ...settledLateDefaults.map(({ id }) => id),
+        ...pendingRemovedDefaults.map(({ id }) => id),
+      ];
+      if (completedMigrationIds.length > 0) {
+        yield* recordAppliedMigrations([...appliedMigrationIds, ...completedMigrationIds]);
       }
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
     }),

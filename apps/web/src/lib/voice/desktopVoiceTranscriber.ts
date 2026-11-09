@@ -97,10 +97,10 @@ export function createDesktopVoiceTranscriber(): VoiceTranscriber | null {
             try {
               const res = await fetch(uri);
               if (!res.ok) {
-                throw new VoiceTranscriptionError(
-                  "transcription-failed",
-                  `Failed to read recorded audio: ${res.statusText}`,
-                );
+                throw new VoiceTranscriptionError({
+                  code: "transcription-failed",
+                  message: `Failed to read recorded audio: ${res.statusText}`,
+                });
               }
               const buffer = await res.arrayBuffer();
               const audioData = new Uint8Array(buffer);
@@ -126,11 +126,11 @@ export function createDesktopVoiceTranscriber(): VoiceTranscriber | null {
                 transcribeOptions.signal.aborted ||
                 (error instanceof Error && error.message.toLowerCase().includes("cancelled"))
               ) {
-                throw new VoiceTranscriptionError(
-                  "cancelled",
-                  "Voice transcription was cancelled.",
-                  { cause: error },
-                );
+                throw new VoiceTranscriptionError({
+                  code: "cancelled",
+                  message: "Voice transcription was cancelled.",
+                  cause: error,
+                });
               }
               throw error;
             }
@@ -142,7 +142,9 @@ export function createDesktopVoiceTranscriber(): VoiceTranscriber | null {
           options.signal.aborted ||
           (error instanceof Error && error.message.toLowerCase().includes("cancelled"))
         ) {
-          throw new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled.", {
+          throw new VoiceTranscriptionError({
+            code: "cancelled",
+            message: "Voice transcription was cancelled.",
             cause: error,
           });
         }

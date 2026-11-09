@@ -58,6 +58,22 @@ describe("resolveVoiceComposerPresentation", () => {
     });
   });
 
+  it("resolves post-processing state", () => {
+    expect(
+      resolveVoiceComposerPresentation(
+        { phase: "post-processing", error: null, errorAction: null },
+        30,
+      ),
+    ).toEqual({
+      leadingAction: "cancel",
+      trailingAction: "confirm",
+      showsSend: false,
+      statusKind: "active",
+      statusLabel: "Transcribing",
+      confirmationEnabled: false,
+    });
+  });
+
   it("resolves error state", () => {
     expect(
       resolveVoiceComposerPresentation(

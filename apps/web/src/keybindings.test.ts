@@ -875,14 +875,14 @@ describe("composer and pull request shortcuts", () => {
     }
   });
 
-  it("routes mod+shift+d to composer.dictate outside terminalFocus and terminal.splitVertical inside terminalFocus", () => {
+  it("routes mod+shift+d to composer.dictation outside terminalFocus and terminal.splitVertical inside terminalFocus", () => {
     const dictateEvent = event({ key: "d", code: "KeyD", metaKey: true, shiftKey: true });
     assert.strictEqual(
       resolveShortcutCommand(dictateEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
-      "composer.dictate",
+      "composer.dictation",
     );
     assert.strictEqual(
       resolveShortcutCommand(dictateEvent, DEFAULT_RESOLVED_KEYBINDINGS, {

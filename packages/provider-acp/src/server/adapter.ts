@@ -9121,7 +9121,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       } else {
                         // Settled soft interrupts have no prompt to cancel; cancel could kill background subagents.
                         if (!settledSoftInterrupt && (yield* promptStillRunsAfterHold(context))) {
-                          yield* runtime.cancel;
+                          const cancelExit = yield* Effect.exit(runtime.cancel);
+                          if (Exit.isFailure(cancelExit)) {
+                            if (!context.finalized) {
+                              yield* Ref.set(runtimeRestartRequired, true);
+                              yield* quarantineStoppedRun();
+                              yield* finalizeTurn(context, "interrupted");
+                            }
+                            return yield* Effect.failCause(cancelExit.cause);
+                          }
                         }
                         if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
                           yield* Ref.set(runtimeRestartRequired, true);

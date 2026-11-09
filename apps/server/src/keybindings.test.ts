@@ -145,6 +145,56 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("removes the obsolete dictate default from existing configs on startup", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const obsoleteDefault = {
+        key: "mod+shift+d",
+        command: "composer.dictate",
+        when: "!terminalFocus",
+      } as const;
+      const customDictate = {
+        key: "alt+shift+d",
+        command: "composer.dictate",
+        when: "!terminalFocus",
+      } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        ...SharedKeybindings.DEFAULT_KEYBINDINGS,
+        obsoleteDefault,
+        customDictate,
+      ]);
+
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(
+        persisted.some(
+          (entry) =>
+            entry.command === "composer.dictate" &&
+            entry.key === "mod+shift+d" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "composer.dictate" &&
+            entry.key === "alt+shift+d" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "composer.dictation" &&
+            entry.key === "mod+shift+d" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
