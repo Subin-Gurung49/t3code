@@ -40,7 +40,29 @@ vi.mock("react-native-reanimated", () => {
     withTiming: (value: unknown) => value,
   };
 });
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({}) }));
+vi.mock("expo", () => ({
+  requireNativeModule: () => ({}),
+  requireOptionalNativeModule: () => null,
+}));
+vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
+vi.mock("expo-constants", () => ({ default: { expoConfig: { extra: {} } } }));
+vi.mock("expo-secure-store", () => ({
+  getItem: () => null,
+  getItemAsync: () => Promise.resolve(null),
+  setItem: () => undefined,
+  setItemAsync: () => Promise.resolve(),
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 6,
+}));
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA1: "SHA-1", SHA256: "SHA-256", SHA384: "SHA-384", SHA512: "SHA-512" },
+  getRandomBytes: (byteCount: number) => new Uint8Array(byteCount),
+  getRandomBytesAsync: (byteCount: number) => Promise.resolve(new Uint8Array(byteCount)),
+  randomUUID: () => "00000000-0000-4000-8000-000000000000",
+}));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => ({}),
+}));
 vi.mock("@react-navigation/native", () => ({
   StackActions: { push: (...args: unknown[]) => ({ type: "PUSH", args }) },
   useFocusEffect: () => undefined,
@@ -127,6 +149,7 @@ vi.mock("../settings/appearance/useScaledTextRole", () => ({
 vi.mock("../voice-input/ComposerDictationControl", () => ({
   ComposerDictationCancelAction: () => null,
   ComposerDictationDraftContent: ({ children }: ContainerProps) => <div>{children}</div>,
+  ComposerDictationError: () => null,
   ComposerDictationPrimaryAction: () => null,
   ComposerDictationStartAction: ({ isAvailable }: { readonly isAvailable: boolean }) =>
     isAvailable ? <button type="button">Start dictation</button> : null,
@@ -135,6 +158,10 @@ vi.mock("../voice-input/ComposerDictationControl", () => ({
 }));
 vi.mock("../voice-input/useVoiceInputController", () => ({
   useVoiceInputController: mocks.useVoiceInputController,
+}));
+vi.mock("./ComposerPolishBar", () => ({
+  ComposerPolishBar: () => null,
+  ComposerPolishButton: () => null,
 }));
 vi.mock("./ComposerAttachmentButton", () => ({ ComposerAttachmentButton: () => null }));
 vi.mock("./ComposerCommandPopover", () => ({ ComposerCommandPopover: () => null }));
