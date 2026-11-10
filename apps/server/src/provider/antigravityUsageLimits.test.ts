@@ -172,14 +172,14 @@ describe("Antigravity subscription limits", () => {
           "gemini-5h",
           "gemini-weekly",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reports the paid Google plan instead of the base Code Assist tier", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture();
       expect(yield* probe).toMatchObject({ plan: "Google AI Pro" });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps usable quotas when plan lookup fails", () =>
@@ -189,7 +189,7 @@ describe("Antigravity subscription limits", () => {
       expect(limits.unavailable).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
       expect(limits).not.toHaveProperty("plan");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("preserves the separate Gemini 4 Argon weekly allowance", () =>
@@ -223,7 +223,7 @@ describe("Antigravity subscription limits", () => {
         usedPercent: 79,
         resetsAt: "2026-10-31T10:39:35.000Z",
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // Oracle: the 10:16 UTC payload and its narrow Workaround rule.

@@ -5,6 +5,7 @@ import {
   type VoiceTranscriber,
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
+import * as Schema from "effect/Schema";
 import { File } from "expo-file-system";
 
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -14,6 +15,7 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   wav: "audio/wav",
   webm: "audio/webm",
 };
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export type RemoteVoiceTranscription = (
   audioBase64: string,
@@ -66,11 +68,11 @@ async function transcribeVoiceRecording(
     return result.text;
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
-    if (error instanceof VoiceTranscriptionError) throw error;
-    throw new VoiceTranscriptionError(
-      "transcription-failed",
-      "The connected environment could not transcribe this recording.",
-      { cause: error },
-    );
+    if (isVoiceTranscriptionError(error)) throw error;
+    throw new VoiceTranscriptionError({
+      code: "transcription-failed",
+      message: "The connected environment could not transcribe this recording.",
+      cause: error,
+    });
   }
 }

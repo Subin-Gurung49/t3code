@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";

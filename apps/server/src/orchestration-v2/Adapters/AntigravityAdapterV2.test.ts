@@ -251,7 +251,7 @@ describe("AntigravityAdapterV2 interrupt recovery", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -278,7 +278,7 @@ describe("AntigravityAdapterV2 interrupt recovery", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): AcpSessionRuntime.AcpSessionRuntime["Service"] =>
               firstRuntime
                 ? {
@@ -295,8 +295,7 @@ describe("AntigravityAdapterV2 interrupt recovery", () => {
           );
         },
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -361,7 +360,7 @@ describe("AntigravityAdapterV2 token usage", () => {
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
         );
@@ -391,7 +390,7 @@ describe("AntigravityAdapterV2 token usage", () => {
                 env: { T3_ACP_ANTIGRAVITY: "1" },
               },
             }).pipe(
-              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
               Effect.map((runtime): RuntimeService => ({
                 ...runtime,
                 handleSessionUpdate: (handler) =>
@@ -446,8 +445,7 @@ describe("AntigravityAdapterV2 token usage", () => {
               })),
             ),
           withProcess: (_stop, task) => task,
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          defaultModel: Effect.succeed(undefined),
+          defaultModel: Effect.undefined,
         });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",

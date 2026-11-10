@@ -64,7 +64,7 @@ it.effect("reports Go's calendar billing period for monthly pace, including shor
             ),
           ),
         ),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
       NodeAssert.equal(
         limits.windows.find((window) => window.kind === "monthly")?.windowDurationMins,
