@@ -48,6 +48,7 @@ const isPiNativeCommandPath = (commandPath: string) =>
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
+  mise: { tool: "pi" },
   nativeUpdate: {
     args: ["update", "--self"],
     isCommandPath: isPiNativeCommandPath,

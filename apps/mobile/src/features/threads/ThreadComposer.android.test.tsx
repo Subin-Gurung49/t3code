@@ -9,6 +9,11 @@ type ContainerProps = {
   readonly children?: ReactNode;
 };
 
+vi.hoisted(() => {
+  (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+  (globalThis as { expo?: { EventEmitter: unknown } }).expo = { EventEmitter: { prototype: {} } };
+});
+
 const mocks = vi.hoisted(() => ({
   useVoiceInputController: vi.fn(),
 }));
@@ -40,6 +45,23 @@ vi.mock("react-native-reanimated", () => {
     withTiming: (value: unknown) => value,
   };
 });
+vi.mock("expo-asset", () => ({ Asset: { fromModule: () => ({}) } }));
+vi.mock("expo-audio", () => ({
+  AudioModule: { setAudioSessionOwner: () => {} },
+  RecordingPresets: { HIGH_QUALITY: { ios: {}, android: {}, extension: ".m4a" } },
+  createAudioPlayer: () => ({ pause: () => {}, release: () => {} }),
+  useAudioPlayerStatus: () => ({}),
+  setAudioModeAsync: async () => {},
+  setIsAudioActiveAsync: async () => {},
+  requestRecordingPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+  getRecordingPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+}));
+vi.mock("expo-modules-core", () => ({
+  EventEmitter: { prototype: {} },
+  NativeModulesProxy: {},
+  requireNativeModule: () => ({}),
+  requireOptionalNativeModule: () => null,
+}));
 vi.mock("expo", () => ({
   requireNativeModule: () => ({}),
   requireOptionalNativeModule: () => null,
