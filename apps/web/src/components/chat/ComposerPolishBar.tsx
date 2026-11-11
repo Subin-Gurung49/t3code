@@ -1,4 +1,4 @@
-import { CheckIcon, Loader2Icon, RotateCcwIcon, SparklesIcon, XIcon } from "lucide-react";
+import { CheckIcon, Loader2Icon, PencilIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import React from "react";
 
 import { cn } from "../../lib/utils.ts";
@@ -81,7 +81,7 @@ export function ComposerPolishBar(props: {
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 font-medium text-primary">
-            <SparklesIcon className="size-3.5" />
+            <PencilIcon className="size-3.5" />
             <span>Prompt polish preview</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -147,7 +147,7 @@ export function ComposerPolishButton(props: {
             onClick={props.onClick}
             className={props.className}
           >
-            {props.isBusy ? <Loader2Icon className="animate-spin" /> : <SparklesIcon />}
+            {props.isBusy ? <Loader2Icon className="animate-spin" /> : <PencilIcon />}
           </Button>
         }
       />

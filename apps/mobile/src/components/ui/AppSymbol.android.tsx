@@ -317,7 +317,6 @@ const SF_ICON_LOOKUP: Partial<
 > = ANDROID_ICON_BY_SF_SYMBOL;
 
 const ANDROID_ICON_BY_MATERIAL_NAME = {
-  auto_awesome: IconPencil,
   bolt: IconBolt,
   build: IconTool,
   chat: IconMessage,

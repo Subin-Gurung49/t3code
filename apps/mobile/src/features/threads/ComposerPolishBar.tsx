@@ -24,12 +24,7 @@ export function ComposerPolishButton(props: {
       {props.isBusy ? (
         <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
       ) : (
-        <SymbolView
-          name={{ ios: "sparkles", android: "auto_awesome" }}
-          size={20}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-        />
+        <SymbolView name="pencil" size={20} tintColorClassName="accent-icon" type="monochrome" />
       )}
     </Pressable>
   );
@@ -86,7 +81,7 @@ export function ComposerPolishBar(props: {
       <View className="mx-3 mb-2 gap-2 rounded-xl border border-primary/30 bg-primary/10 p-3">
         <View className="flex-row items-center gap-2">
           <SymbolView
-            name={{ ios: "sparkles", android: "auto_awesome" }}
+            name="pencil"
             size={16}
             tintColorClassName="accent-primary"
             type="monochrome"
