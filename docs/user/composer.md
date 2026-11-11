@@ -198,9 +198,11 @@ and use **Attach again** or remove the missing file before sending.
 
 ## Polish a draft
 
-Choose a **Prompt polish model** in Settings under **Text generation** for the
-connected environment. Polish supports ChatGPT-authenticated Codex and OpenCode Go
-models. It uses your existing provider account and does not choose a fallback.
+Choose a **Prompt polish model** in Settings under **Text generation** on web and
+desktop, or under **Threads → Prompt polish** on mobile, for the connected
+environment. Polish supports ChatGPT-authenticated Codex and OpenCode Go models,
+and stays off until you choose one. It uses your existing provider account and
+does not choose a fallback.
 
 Use **Polish** on a typed or transcribed draft to clean up wording with recent
 conversation context. Review the preview, then apply it and edit before sending.
@@ -283,15 +285,16 @@ inside WSL or on a different computer, install FFmpeg there instead; installing
 it only on Windows does not provide it to a Linux server.
 
 Pair the phone with that PC's updated environment using [remote access](./remote-access.md).
-The PC must remain awake and reachable. Grant the phone microphone permission,
+The PC must remain awake and reachable. Open **Settings → Voice → Transcribe on**,
+choose that environment, and confirm. Grant the phone microphone permission,
 record a short phrase, then confirm to finish. Wait for text in the composer;
 transcription does not send the message. The server needs internet access on first
 use to download the model; it does not require a speech API key or Expo login.
 
-If the microphone is missing, check that the phone has the fork APK. If recording
-works but transcription fails, check the connected server's version and FFmpeg
-installation, then its logs. A moving waveform confirms capture, not successful
-transcription.
+If the microphone is missing, check that the phone has the fork APK, then choose
+the environment under **Settings → Voice → Transcribe on**. If recording works but
+transcription fails, check the connected server's version and FFmpeg installation,
+then its logs. A moving waveform confirms capture, not successful transcription.
 
 ## Queued messages
 

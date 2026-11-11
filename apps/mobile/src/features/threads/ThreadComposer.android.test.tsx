@@ -221,22 +221,20 @@ import { ThreadComposer, type ThreadComposerProps } from "./ThreadComposer";
 
 const environmentId = "environment-android" as EnvironmentId;
 
-it("passes the Android environment to the composer voice controller", () => {
+it("keeps Android dictation on the provider's transcription choice", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  mocks.useVoiceInputController.mockImplementation(
-    (input: { readonly environmentId: EnvironmentId | null | undefined }) => ({
-      audioLevels: { value: [] },
-      blocksSubmission: false,
-      cancel: vi.fn(),
-      elapsedSeconds: 0,
-      freezesEditor: false,
-      isAvailable: input.environmentId === environmentId,
-      isBusy: false,
-      start: vi.fn(),
-      state: { error: null, errorAction: null, phase: "idle" },
-      stop: vi.fn(),
-    }),
-  );
+  mocks.useVoiceInputController.mockImplementation(() => ({
+    audioLevels: { value: [] },
+    blocksSubmission: false,
+    cancel: vi.fn(),
+    elapsedSeconds: 0,
+    freezesEditor: false,
+    isAvailable: true,
+    isBusy: false,
+    start: vi.fn(),
+    state: { error: null, errorAction: null, phase: "idle" },
+    stop: vi.fn(),
+  }));
   const props: ThreadComposerProps = {
     activeThreadBusy: false,
     canOperateThread: true,
@@ -277,8 +275,9 @@ it("passes the Android environment to the composer voice controller", () => {
 
   act(() => root.render(<ThreadComposer {...props} />));
 
-  expect(mocks.useVoiceInputController).toHaveBeenCalledWith(
-    expect.objectContaining({ environmentId }),
-  );
+  const voiceInput = mocks.useVoiceInputController.mock.calls[0]?.[0];
+  expect(voiceInput).toBeDefined();
+  expect(voiceInput).not.toHaveProperty("environmentId");
+  expect(voiceInput).not.toHaveProperty("transcriber");
   expect(container.textContent).toContain("Start dictation");
 });

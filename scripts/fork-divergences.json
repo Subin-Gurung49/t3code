@@ -1,0 +1,89 @@
+{
+  "entries": [
+    {
+      "id": "prompt-polish",
+      "why": "The fork adds prompt polish to both composers and needs its model setting on web and mobile.",
+      "files": {
+        "apps/server/src/orchestration-v2/ThreadPromptPolishService.ts": {
+          "require": ["ThreadPromptPolishService"]
+        },
+        "packages/contracts/src/settings.ts": {
+          "require": ["promptPolishModelSelection"]
+        },
+        "apps/web/src/components/chat/ChatComposer.tsx": {
+          "require": ["ComposerPolishButton", "useComposerPolish"]
+        },
+        "apps/web/src/components/settings/SettingsPanels.tsx": {
+          "require": ["prompt-polish-model", "promptPolishModelSelection"]
+        },
+        "apps/web/src/components/settings/settingsSearch.ts": {
+          "require": ["prompt-polish-model", "/settings/threads"]
+        },
+        "apps/mobile/src/features/threads/ThreadComposer.tsx": {
+          "require": ["ComposerPolishButton", "useMobileComposerPolish"]
+        },
+        "apps/mobile/src/features/settings/SettingsServerControlsRouteScreen.tsx": {
+          "require": ["Prompt polish", "promptPolishModelSelection"]
+        }
+      }
+    },
+    {
+      "id": "android-dictation-route",
+      "why": "Android dictation must use the route the user chose. A second per-composer environment transcriber made the local recorder write into a pipe nobody read, which froze around six seconds.",
+      "files": {
+        "apps/mobile/src/features/voice-input/useVoiceInputController.ts": {
+          "require": ["useGlobalVoiceInput"],
+          "forbid": ["useMobileVoiceTranscriber"]
+        }
+      }
+    },
+    {
+      "id": "android-apk-updates",
+      "why": "Preview APKs update themselves from the fork's GitHub releases.",
+      "files": {
+        "apps/mobile/src/features/updates/android-release-updates.ts": {
+          "require": ["canCheckAndroidReleaseUpdates", "runAndroidReleaseUpdateCheck"]
+        },
+        "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx": {
+          "require": ["checkForAndroidReleaseUpdate"]
+        }
+      }
+    },
+    {
+      "id": "usage-quota-cards",
+      "why": "The fork adds account quota cards and provider usage details on web and mobile.",
+      "files": {
+        "apps/mobile/src/features/usage/AccountQuotaCards.tsx": {
+          "require": ["AccountQuotaCards"]
+        },
+        "apps/web/src/components/chat/ComposerTokenUsage.tsx": {
+          "require": ["ComposerTokenUsage"]
+        },
+        "apps/web/src/components/chat/ThreadUsageLimits.tsx": {
+          "require": ["ThreadUsageLimits"]
+        }
+      }
+    },
+    {
+      "id": "fork-composer-slot",
+      "why": "Fork-only composer bars live behind one small slot instead of edits throughout the upstream composer.",
+      "files": {
+        "apps/web/src/components/chat/ComposerForkExtensions.tsx": {
+          "require": ["ComposerForkBars"]
+        },
+        "apps/web/src/components/chat/ChatComposer.tsx": {
+          "require": ["ComposerForkBars"]
+        }
+      }
+    },
+    {
+      "id": "desktop-voice-input",
+      "why": "The fork adds offline desktop dictation and its worker packaging.",
+      "files": {
+        "apps/desktop/src/voiceInput/VoiceTranscriptionWorker.ts": {
+          "require": ["normalizeAudioBytes"]
+        }
+      }
+    }
+  ]
+}

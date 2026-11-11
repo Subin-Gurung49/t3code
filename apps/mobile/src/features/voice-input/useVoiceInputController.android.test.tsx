@@ -1,16 +1,11 @@
-import type { EnvironmentId } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => {
-  const transcriber = { prepare: vi.fn() };
-  return {
-    start: vi.fn(async () => undefined),
-    transcriber,
-    useMobileVoiceTranscriber: vi.fn(() => transcriber),
-  };
-});
+const mocks = vi.hoisted(() => ({
+  available: true,
+  start: vi.fn(async (_target: unknown) => undefined),
+}));
 
 vi.mock("@react-navigation/native", () => ({ useFocusEffect: () => undefined }));
 vi.mock("./VoiceInputProvider", () => ({
@@ -18,7 +13,7 @@ vi.mock("./VoiceInputProvider", () => ({
     audioLevels: { value: [] },
     cancel: vi.fn(),
     elapsedSeconds: 0,
-    isAvailable: false,
+    isAvailable: mocks.available,
     isBusy: false,
     ownerKey: null,
     session: {
@@ -31,17 +26,11 @@ vi.mock("./VoiceInputProvider", () => ({
     stop: vi.fn(),
   }),
 }));
-vi.mock("./useMobileVoiceTranscriber", () => ({
-  useMobileVoiceTranscriber: mocks.useMobileVoiceTranscriber,
-}));
 
 import { useVoiceInputController } from "./useVoiceInputController";
 
-const environmentId = "environment-android" as EnvironmentId;
-
 function ThreadComposerVoiceProbe() {
   const voice = useVoiceInputController({
-    environmentId,
     label: "Android thread",
     onChangeDraftMessage: vi.fn(),
     onChangeSelection: vi.fn(),
@@ -57,8 +46,9 @@ function ThreadComposerVoiceProbe() {
   ) : null;
 }
 
-it("shows and starts Android composer dictation with the environment transcriber", () => {
+it("starts Android composer dictation with the provider's transcriber", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.available = true;
   const container = document.createElement("div");
   const root = createRoot(container);
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
@@ -67,11 +57,19 @@ it("shows and starts Android composer dictation with the environment transcriber
   act(() => container.querySelector("button")?.click());
 
   expect(container.textContent).toBe("Start dictation");
-  expect(mocks.useMobileVoiceTranscriber).toHaveBeenCalledWith(environmentId);
-  expect(mocks.start).toHaveBeenCalledWith(
-    expect.objectContaining({
-      ownerKey: "thread-android",
-      transcriber: mocks.transcriber,
-    }),
-  );
+  const target = mocks.start.mock.calls[0]?.[0];
+  expect(target).toMatchObject({ ownerKey: "thread-android" });
+  expect(target).not.toHaveProperty("transcriber");
+});
+
+it("does not bypass the device transcription choice on Android", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.available = false;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+
+  act(() => root.render(<ThreadComposerVoiceProbe />));
+
+  expect(container.textContent).toBe("");
 });
