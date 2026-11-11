@@ -79,15 +79,16 @@ once started. Releasing the session or deleting its recording when the abort sig
 fires would race that work. The [transcription contract](../../packages/client-runtime/src/voice-input/transcription.ts)
 therefore requires implementations to settle only after their work has stopped;
 the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
-<<<<<<< HEAD
-cancellation between native calls and discards late results.
+cancellation between native calls and discards late results. On the server,
+interrupting a batch request kills the worker process instead; the next request
+reloads the model.
 
 ## Environment transcription
 
-A composer can supply its own transcriber, which overrides the client's local one
-for that recording. Android uses this to call
-`POST /api/orchestration/voice/transcribe` on its environment rather than keeping a
-model on the phone.
+A selected environment supplies the transcriber for that recording, overriding the
+client's local one. Environment dictation calls
+`POST /api/orchestration/voice/transcribe` with a finished recording rather than
+keeping a model on the phone; on-device dictation keeps its audio local.
 
 The [server entry](../../apps/server/src/voice/VoiceTranscription.ts) writes the
 upload to a temporary file, converts it to 16 kHz mono PCM with `ffmpeg`, then runs
@@ -97,10 +98,3 @@ model out of process matters: the first request downloads the weights and infere
 is CPU-heavy, and neither may stall the websocket server. Weight files live under
 `~/.cache/t3code/voice` (or `XDG_CACHE_HOME`), so they survive server updates.
 `ffmpeg` is a runtime requirement with no bundled fallback.
-=======
-
-cancellation between native calls and discards late results. On the server,
-interrupting a batch request kills the worker process instead; the next request
-reloads the model.
-
-> > > > > > > upstream/main

@@ -2,10 +2,12 @@ import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
 import {
   type ResponseStreamingMode,
+  type ServerProvider,
   type ServerSettings,
   type ServerSettingsPatch,
   type ThreadEnvMode,
@@ -201,12 +203,37 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const displayTargets = pendingWrites > 0 && pendingTargets !== null ? pendingTargets : targets;
   const hasConnectedSelection = targets.length > 0;
   const reference = displayTargets[0] ?? null;
+  const referenceServerConfig = useEnvironmentServerConfig(
+    reference?.environment.environmentId ?? null,
+  );
+  const promptPolishProviders: readonly ServerProvider[] = (referenceServerConfig?.providers ?? [])
+    .filter(
+      (provider) =>
+        provider.enabled &&
+        provider.availability !== "unavailable" &&
+        ((provider.driver === "codex" && provider.auth.type === "chatgpt") ||
+          provider.driver === "opencode"),
+    )
+    .map((provider) => ({
+      ...provider,
+      models:
+        provider.driver === "opencode"
+          ? provider.models.filter(
+              (model) =>
+                model.slug.startsWith("opencode-go/") || model.subProvider === "OpenCode Go",
+            )
+          : provider.models,
+    }))
+    .filter((provider) => provider.models.length > 0);
   const uniform = <K extends keyof ServerSettings>(key: K) =>
     uniformMobileSetting(displayTargets, key);
   // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+  const promptPolishSelection = isMixed("promptPolishModelSelection")
+    ? undefined
+    : uniform("promptPolishModelSelection");
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -380,6 +407,67 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onPress={() => write({ responseStreamingMode: choice.mode })}
                     />
                   ))}
+                </SettingsSection>
+                <SettingsSection
+                  title="Prompt polish"
+                  footer={
+                    managed("promptPolishModelSelection") ??
+                    "Requires an authenticated ChatGPT Codex account or an OpenCode Go model on the selected environment."
+                  }
+                  trailing={
+                    pendingWrites === 0 && isMixed("promptPolishModelSelection") ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  <SettingsChoiceRow
+                    label="Off"
+                    description="Do not polish composer drafts."
+                    selected={promptPolishSelection === null}
+                    disabled={disabledFor("promptPolishModelSelection")}
+                    onPress={() => write({ promptPolishModelSelection: null })}
+                  />
+                  {promptPolishProviders.length === 0 ? (
+                    <SettingsChoiceRow
+                      label="No provider available"
+                      description="Add a ChatGPT Codex account or an OpenCode Go provider on this environment."
+                      selected={false}
+                      separated
+                      disabled
+                      onPress={() => {}}
+                    />
+                  ) : (
+                    promptPolishProviders.flatMap((provider) =>
+                      provider.models.map((model) => {
+                        const selected =
+                          promptPolishSelection?.instanceId === provider.instanceId &&
+                          promptPolishSelection.model === model.slug;
+                        const providerLabel = provider.displayName ?? provider.driver;
+                        return (
+                          <SettingsChoiceRow
+                            key={`${provider.instanceId}:${model.slug}`}
+                            label={
+                              promptPolishProviders.length > 1
+                                ? `${providerLabel} - ${model.name || model.slug}`
+                                : model.name || model.slug
+                            }
+                            description={`Run on ${providerLabel}`}
+                            selected={selected}
+                            separated
+                            disabled={disabledFor("promptPolishModelSelection")}
+                            onPress={() =>
+                              write({
+                                promptPolishModelSelection: {
+                                  instanceId: provider.instanceId,
+                                  model: model.slug,
+                                },
+                              })
+                            }
+                          />
+                        );
+                      }),
+                    )
+                  )}
                 </SettingsSection>
                 <SettingsSection title="Preview browser">
                   <SettingsSwitchRow

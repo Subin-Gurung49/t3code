@@ -7,6 +7,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Reuse earlier conflict resolutions on the next weekly sync.
+git config rerere.enabled true
+git config rerere.autoupdate true
+
 TARGET_REF="${1:-upstream/main}"
 
 echo "==> Validating git status..."
@@ -60,7 +64,10 @@ if ! git merge --no-ff --no-commit "$RESOLVED_TARGET_SHA"; then
     echo "Please resolve conflicts in these files, then run:"
     echo "  pnpm install --frozen-lockfile"
     echo "  vp run check:changed $PRE_SYNC_FORK_SHA"
+    echo "  pnpm check:fork"
     echo "  git commit -m 'chore(sync): merge $TARGET_REF ($RESOLVED_TARGET_SHA)'"
+    echo ""
+    echo "Keep fork-only behavior. See docs/operations/fork-maintenance.md."
     exit 1
   fi
 fi
@@ -70,6 +77,11 @@ pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
 echo "==> Running validation check against pre-sync baseline ($PRE_SYNC_FORK_SHA)..."
 vp run check:changed "$PRE_SYNC_FORK_SHA"
+
+# check:changed only runs tests beside changed files. Fork-only wiring often
+# sits in an unchanged file, so check it explicitly.
+echo "==> Checking fork-only wiring..."
+pnpm check:fork
 
 echo "==> Committing merge..."
 git commit -m "chore(sync): merge $TARGET_REF into $CURRENT_BRANCH"

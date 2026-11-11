@@ -71,6 +71,11 @@ describe("searchSettings", () => {
         scope: "environment-defaults",
       });
     }
+    expect(searchSettings("prompt polish")[0]).toMatchObject({
+      id: "prompt-polish-model",
+      to: "/settings/threads",
+      scope: "environment-defaults",
+    });
   });
 
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {

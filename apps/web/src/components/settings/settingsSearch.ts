@@ -821,8 +821,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "prompt-polish-model",
     title: "Prompt polish model",
-    to: "/settings/general",
-    scope: "project-defaults",
+    to: "/settings/threads",
+    scope: "environment-defaults",
     searchTerms: ["prompt polish speech to text draft refine improve codex opencode"],
   },
   {

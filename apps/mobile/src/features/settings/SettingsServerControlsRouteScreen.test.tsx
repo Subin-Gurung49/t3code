@@ -1,9 +1,28 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+type MockTarget = {
+  environmentId: string;
+  label: string;
+  connection: { phase: string };
+  serverConfig: {
+    settings: ServerSettings;
+    environment: {
+      capabilities: {
+        projectSettingsOverrides: boolean;
+        threadAutoSettlement: boolean;
+      };
+    };
+  };
+};
 
 const { Children, mocks } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
@@ -11,7 +30,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     branchNaming: { onChange: (_patch: ServerSettingsPatch) => {} },
     updateSettings: vi.fn(),
     alert: vi.fn(),
-    targets: [] as ReturnType<typeof environment>[],
+    targets: [] as MockTarget[],
     readOnly: new Set<string>(),
     projectSelected: false,
   },
@@ -61,6 +80,7 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/entities", () => ({ useEnvironmentServerConfig: () => null }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
@@ -146,7 +166,7 @@ import {
   SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
 
-function environment(environmentId: string, label: string) {
+function environment(environmentId: string, label: string): MockTarget {
   return {
     environmentId,
     label,

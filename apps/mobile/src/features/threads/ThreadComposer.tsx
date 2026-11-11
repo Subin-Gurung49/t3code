@@ -582,7 +582,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersSideChat: props.offersSideChat === true,
   });
   const voiceInput = useVoiceInputController({
-    environmentId: props.environmentId,
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || "Untitled thread",
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,

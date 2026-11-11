@@ -1,0 +1,33 @@
+name: Fork Invariants
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-invariants-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.repository == 'Subin-Gurung49/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      # No install: the checker reads source files and uses Node built-ins only.
+      - name: Check fork-only wiring
+        run: node scripts/check-fork-divergences.ts

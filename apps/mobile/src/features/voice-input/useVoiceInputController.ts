@@ -3,38 +3,31 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   voiceInputBlocksSubmission,
   type VoiceInputState,
-  type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
-import { useMobileVoiceTranscriber } from "./useMobileVoiceTranscriber";
 import { createVoiceInputTarget } from "./voiceInputSession";
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
 export type VoiceInputControllerInput = {
-  readonly environmentId: EnvironmentId | null | undefined;
   readonly ownerKey: string | null;
   readonly label: string;
   readonly readDraftMessage: () => string | null;
   readonly subscribeToDraftChanges: (onChange: () => void) => () => void;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
-  readonly transcriber?: VoiceTranscriber | null;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onChangeSelection: (selection: ComposerEditorSelection) => void;
 };
 
 export function useVoiceInputController(input: VoiceInputControllerInput) {
   const global = useGlobalVoiceInput();
-  const mobileTranscriber = useMobileVoiceTranscriber(input.environmentId);
-  const transcriber = input.transcriber === undefined ? mobileTranscriber : input.transcriber;
   const { session } = global;
-  const latestInput = useRef({ ...input, transcriber });
+  const latestInput = useRef(input);
   // oxlint-disable-next-line react/refs -- Transcription finishes asynchronously and must reach the composer's current selection setter, not the one captured at start.
-  latestInput.current = { ...input, transcriber };
+  latestInput.current = input;
   const mounted = useRef(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mount so async transcription results skip a composer that has unmounted
   useEffect(() => {
@@ -68,14 +61,13 @@ export function useVoiceInputController(input: VoiceInputControllerInput) {
         },
         captured.selection,
         captured.subscribeToDraftChanges,
-        captured.transcriber,
       ),
       label: captured.label,
     });
   }, [session]);
   const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;
   const isBusy = voiceInputBlocksSubmission(state);
-  const isAvailable = transcriber === undefined ? global.isAvailable : transcriber !== null;
+  const isAvailable = global.isAvailable;
   return {
     isAvailable: isAvailable && (!global.isBusy || global.ownerKey === input.ownerKey),
     state,
