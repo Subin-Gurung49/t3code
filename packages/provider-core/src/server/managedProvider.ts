@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -28,6 +29,7 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
   // null preserves an explicitly cleared plan across probes and enrichment.
   readonly usageAuthLabel: string | null | undefined;
+  readonly checked: boolean;
 }
 
 function withUsageLimits(
@@ -40,6 +42,11 @@ function withUsageLimits(
   const { usageLimits: _previous, ...rest } = snapshot;
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
+
+const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+const FAILED_CHECK_RECHECK_DELAY_MS = Duration.toMillis(
+  Duration.fromInputUnsafe(FAILED_CHECK_RECHECK_DELAY),
+);
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -79,8 +86,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
     usageAuthLabel: undefined,
+    checked: false,
   });
   const settingsRef = yield* Ref.make(initialSettings);
+  const recheckDeadlineRef = yield* Ref.make<number | null>(null);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -141,11 +150,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: { readonly forceRefresh?: boolean; readonly deferFailure?: boolean },
   ) {
-    const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
-    if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
+    const settingsChanged =
+      options?.forceRefresh === true || input.haveSettingsChanged(previousSettings, nextSettings);
+    // Nothing watches credential files, so any settings apply rechecks a failed sign-in.
+    const { snapshot: currentSnapshot } = yield* Ref.get(snapshotStateRef);
+    const forceRefresh =
+      options?.forceRefresh === true ||
+      (currentSnapshot.enabled && currentSnapshot.auth.status === "unauthenticated");
+    if (!forceRefresh && !settingsChanged) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
@@ -168,6 +183,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
+    // One failed periodic check over a ready provider is often transient; recheck before showing it.
+    if (
+      options?.deferFailure === true &&
+      probedSnapshot.status === "error" &&
+      probedSnapshot.auth.status !== "unauthenticated"
+    ) {
+      const { snapshot } = yield* Ref.get(snapshotStateRef);
+      if (snapshot.enabled && snapshot.status === "ready") {
+        const now = yield* Clock.currentTimeMillis;
+        yield* Ref.set(recheckDeadlineRef, now + FAILED_CHECK_RECHECK_DELAY_MS);
+        return snapshot;
+      }
+    }
+    yield* Ref.set(recheckDeadlineRef, null);
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -212,7 +241,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation, usageAuthLabel },
+          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
         ] as const;
       },
     );
@@ -311,12 +340,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     input.refreshOnInterval !== false &&
     (typeof input.refreshOnInterval !== "function" || input.refreshOnInterval(snapshot));
 
-  const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* () {
+  const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* (
+    deferFailure: boolean,
+  ) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits || !deferFailure) {
       if (needsProviderRefresh(snapshot)) {
-        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
+        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
       }
       return;
     }
@@ -383,35 +414,92 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    getRefreshInterval.pipe(
-      Effect.flatMap((refreshInterval) =>
-        // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - manual refreshes and settings changes restart the interval, not a timeout
-        Effect.raceFirst(
-          Effect.sleep(
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
-              ? "60 seconds"
-              : refreshInterval,
-          ).pipe(Effect.as(true)),
-          Queue.take(refreshScheduleChanges).pipe(Effect.as(false)),
-        ).pipe(
-          Effect.flatMap((intervalElapsed) =>
-            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? shouldRefreshOnInterval.pipe(
-                  Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh
-                      ? refreshSemaphore.withPermits(1)(refreshOnInterval())
-                      : Effect.void,
+    Effect.all([getRefreshInterval, Ref.get(recheckDeadlineRef), Clock.currentTimeMillis]).pipe(
+      Effect.flatMap(([configuredInterval, recheckDeadline, now]) => {
+        const configuredIntervalMs = Duration.toMillis(
+          Duration.fromInputUnsafe(configuredInterval),
+        );
+        const hasPendingRetry = recheckDeadline !== null;
+        const retryDelayMs = hasPendingRetry ? Math.max(0, recheckDeadline - now) : 0;
+        const waitMs = hasPendingRetry
+          ? retryDelayMs
+          : configuredIntervalMs > 0
+            ? configuredIntervalMs
+            : 60_000;
+        const waitForInterval = Effect.sleep(waitMs).pipe(Effect.as(true));
+        const waitForScheduleChange = Queue.take(refreshScheduleChanges).pipe(Effect.as(false));
+        const wait =
+          hasPendingRetry && retryDelayMs === 0
+            ? Effect.succeed(true)
+            : Effect.raceFirst(waitForInterval, waitForScheduleChange);
+        const refreshIfNeeded = shouldRefreshOnInterval.pipe(
+          Effect.flatMap((shouldRefresh) => {
+            if (!shouldRefresh) {
+              if (recheckDeadline === null) return Effect.void;
+              const nextCheckDelayMs = configuredIntervalMs > 0 ? configuredIntervalMs : 60_000;
+              return Clock.currentTimeMillis.pipe(
+                Effect.flatMap((checkedAt) =>
+                  Ref.update(recheckDeadlineRef, (current) =>
+                    current === recheckDeadline ? checkedAt + nextCheckDelayMs : current,
                   ),
+                ),
+              );
+            }
+            return refreshSemaphore.withPermits(1)(
+              Effect.gen(function* () {
+                const currentDeadline = yield* Ref.get(recheckDeadlineRef);
+                const currentTime = yield* Clock.currentTimeMillis;
+                if (
+                  (recheckDeadline !== null && currentDeadline === null) ||
+                  (currentDeadline !== null && currentDeadline > currentTime)
                 )
+                  return;
+                const retryPending = currentDeadline !== null;
+                yield* refreshOnInterval(!retryPending).pipe(
+                  Effect.tap(() =>
+                    retryPending ? Ref.set(recheckDeadlineRef, null) : Effect.void,
+                  ),
+                );
+              }),
+            );
+          }),
+        );
+        const refreshWithRetryBackoff = hasPendingRetry
+          ? refreshIfNeeded.pipe(
+              Effect.catchCause((cause) =>
+                Clock.currentTimeMillis.pipe(
+                  Effect.flatMap((failedAt) =>
+                    Ref.update(recheckDeadlineRef, (current) =>
+                      current === null ? null : failedAt + FAILED_CHECK_RECHECK_DELAY_MS,
+                    ),
+                  ),
+                  Effect.andThen(Effect.failCause(cause)),
+                ),
+              ),
+            )
+          : refreshIfNeeded;
+        return wait.pipe(
+          Effect.flatMap((intervalElapsed) =>
+            intervalElapsed && (hasPendingRetry || configuredIntervalMs > 0)
+              ? refreshWithRetryBackoff
               : Effect.void,
           ),
-        ),
-      ),
+        );
+      }),
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
 
-  yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+  // Probes spawn provider CLIs; starting them during server startup slows the first client load.
+  yield* (host.awaitServerReady ?? Effect.void).pipe(
+    Effect.andThen(
+      // Read under the lock, so a settings check in flight cannot be overwritten with older settings.
+      refreshSemaphore.withPermits(1)(
+        Ref.get(settingsRef).pipe(
+          Effect.flatMap((settings) => applySnapshotBase(settings, { forceRefresh: true })),
+        ),
+      ),
+    ),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
@@ -419,6 +507,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+    isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
     refresh: Queue.offer(refreshScheduleChanges, undefined).pipe(
       Effect.andThen(input.resolveMaintenance({ fresh: true })),
       Effect.andThen(refreshSnapshot),

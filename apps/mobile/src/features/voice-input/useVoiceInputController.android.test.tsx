@@ -37,7 +37,6 @@ function ThreadComposerVoiceProbe() {
     ownerKey: "thread-android",
     readDraftMessage: () => "",
     selection: { start: 0, end: 0 },
-    subscribeToDraftChanges: () => () => undefined,
   });
   return voice.isAvailable ? (
     <button type="button" onClick={voice.start}>

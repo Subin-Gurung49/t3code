@@ -242,6 +242,7 @@ it("keeps Android dictation on the provider's transcription choice", () => {
     canStopThread: false,
     canSwitchProvider: true,
     connectionState: "connected",
+    redirectsApproval: false,
     environmentId,
     environmentLabel: null,
     followUpBehavior: "queue",

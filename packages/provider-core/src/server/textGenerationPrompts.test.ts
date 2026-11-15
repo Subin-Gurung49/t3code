@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildPromptPolishPrompt, buildThreadTitlePrompt } from "./textGenerationPrompts.ts";
 import { normalizeCliError } from "./textGenerationUtils.ts";
 
 describe("normalizeCliError", () => {
@@ -15,8 +16,6 @@ describe("normalizeCliError", () => {
     expect(result.message).not.toContain("secret-token");
   });
 });
-
-import { buildPromptPolishPrompt } from "./textGenerationPrompts.ts";
 
 describe("buildPromptPolishPrompt", () => {
   it("enforces draft authoritativeness and wraps draft in tags", () => {
@@ -47,5 +46,18 @@ describe("buildPromptPolishPrompt", () => {
     );
     // Bounded to 8000 chars
     expect(prompt.length).toBeLessThan(longContext.length);
+  });
+});
+
+describe("buildThreadTitlePrompt", () => {
+  it("names the project to leave out of initial and regenerated titles", () => {
+    for (const previousTitle of [undefined, "Hyperdrive Config Crash"]) {
+      const { prompt } = buildThreadTitlePrompt({
+        message: "hyperdrive init crashes without a config",
+        previousTitle,
+        projectTitle: "Hyperdrive",
+      });
+      expect(prompt).toContain('Never include the project name ("Hyperdrive")');
+    }
   });
 });
