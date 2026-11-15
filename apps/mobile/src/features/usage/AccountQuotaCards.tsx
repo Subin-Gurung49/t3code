@@ -151,7 +151,7 @@ function QuotaWindowRow({
   readonly colors: Readonly<Record<UsageProviderKind, string>>;
 }) {
   const isAntigravity = account.driver === "antigravity";
-  const percent = isAntigravity ? 100 - window.usedPercent : window.usedPercent;
+  const percent = window.usedPercent;
   const left = !isAntigravity && window === primary ? null : quotaCountdown(window.resetsAt, now);
   const label =
     isAntigravity && window.kind === "other"
@@ -170,9 +170,7 @@ function QuotaWindowRow({
           )}
           <Text className="text-2xs font-t3-medium tabular-nums text-foreground">
             {Math.round(percent)}%
-            <Text className="font-normal text-foreground-muted">
-              {isAntigravity ? " remaining" : " used"}
-            </Text>
+            <Text className="font-normal text-foreground-muted">{" used"}</Text>
           </Text>
         </View>
       </View>
@@ -181,7 +179,7 @@ function QuotaWindowRow({
           className="h-full rounded-full"
           style={{
             flex: percent,
-            backgroundColor: isAntigravity && percent <= 25 ? "#f59e0b" : color,
+            backgroundColor: isAntigravity && percent >= 75 ? "#f59e0b" : color,
           }}
         />
         <View style={{ flex: 100 - percent }} />

@@ -11,6 +11,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { createDesktopVoiceTranscriber } from "../../lib/voice/desktopVoiceTranscriber.ts";
 import { WebVoiceRecorder } from "../../lib/voice/webVoiceRecorder.ts";
+import {
+  transitionPendingDictationSubmission,
+  type PendingDictationSubmission,
+} from "./composerDictation.logic";
 
 export type UseComposerDictationInput = {
   readonly ownerKey: string;
@@ -27,8 +31,9 @@ export type UseComposerDictationReturn = {
   readonly state: VoiceInputState;
   readonly presentation: VoiceComposerPresentation;
   readonly audioLevels: ReadonlyArray<number>;
-  readonly start: () => void;
+  readonly start: () => Promise<void>;
   readonly stop: () => void;
+  readonly submitAfterDictation: (submit: () => void) => void;
   readonly cancel: () => void;
   readonly toggle: () => void;
   readonly openSettings: () => void;
@@ -59,6 +64,7 @@ export function useComposerDictation(input: UseComposerDictationInput): UseCompo
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const latestInput = useRef(input);
+  const pendingSubmissionRef = useRef<PendingDictationSubmission | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lifecycle integration with dictation and speech recognition services
   useEffect(() => {
     latestInput.current = input;
@@ -115,6 +121,17 @@ export function useComposerDictation(input: UseComposerDictationInput): UseCompo
     }
   }, [input.ownerKey, services]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- submits only after the voice session commits its transcript and returns to idle
+  useEffect(() => {
+    const transition = transitionPendingDictationSubmission(pendingSubmissionRef.current, {
+      type: "state",
+      ownerKey: input.ownerKey,
+      phase: state.phase,
+    });
+    pendingSubmissionRef.current = transition.pending;
+    transition.submit?.();
+  }, [input.ownerKey, state]);
+
   // Timer for elapsed seconds during recording
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lifecycle integration with dictation and speech recognition services
   useEffect(() => {
@@ -132,7 +149,7 @@ export function useComposerDictation(input: UseComposerDictationInput): UseCompo
   }, [state.phase]);
 
   const start = () => {
-    if (!isAvailable) return;
+    if (!isAvailable) return Promise.resolve();
     const captured = latestInput.current;
     const target = createVoiceInputTarget(
       captured.ownerKey,
@@ -148,14 +165,33 @@ export function useComposerDictation(input: UseComposerDictationInput): UseCompo
       captured.readSelectionRange(),
       captured.subscribeToChanges ?? (() => () => {}),
     );
-    void services.session.start(target);
+    return services.session.start(target);
   };
 
   const stop = () => {
     void services.session.controller.stop();
   };
 
+  const submitAfterDictation = (submit: () => void) => {
+    if (state.phase === "preparing") return;
+    if (!voiceInputBlocksSubmission(state)) {
+      submit();
+      return;
+    }
+    if (pendingSubmissionRef.current !== null) return;
+    pendingSubmissionRef.current = transitionPendingDictationSubmission(null, {
+      type: "schedule",
+      ownerKey: input.ownerKey,
+      submit,
+    }).pending;
+    if (state.phase === "recording") void services.session.controller.stop();
+  };
+
   const cancel = () => {
+    pendingSubmissionRef.current = transitionPendingDictationSubmission(
+      pendingSubmissionRef.current,
+      { type: "cancel" },
+    ).pending;
     services.session.cancel(latestInput.current.ownerKey);
   };
 
@@ -188,6 +224,7 @@ export function useComposerDictation(input: UseComposerDictationInput): UseCompo
     isBusy,
     start,
     stop,
+    submitAfterDictation,
     cancel,
     toggle,
     openSettings,

@@ -7,7 +7,6 @@ import {
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type { EnvironmentId, ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
-  collectExternalUsageLinks,
   collectLimitAccounts,
   collectLimitNotices,
   type LimitAccount,
@@ -18,12 +17,11 @@ import {
   quotaCountdown,
   quotaPace,
 } from "@t3tools/shared/usageQuotaCards";
-import { Clock3Icon, ExternalLinkIcon, GaugeIcon } from "lucide-react";
+import { Clock3Icon, GaugeIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePrimarySettings } from "../../hooks/useSettings";
-import { ensureLocalApi } from "../../localApi";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -281,8 +279,8 @@ function AccountQuotaCard({
                   isAntigravity && window.kind === "other"
                     ? window.label.split(" · ").slice(1).join(" · ") || window.label
                     : shortWindowLabel(window);
-                const percent = isAntigravity ? 100 - window.usedPercent : window.usedPercent;
-                const valueLabel = isAntigravity ? "remaining" : "used";
+                const percent = window.usedPercent;
+                const valueLabel = "used";
                 return (
                   <div key={window.id} className="flex min-w-0 flex-col gap-1.5">
                     <div className="flex min-w-0 items-baseline justify-between gap-2 text-2xs leading-4 tabular-nums">
@@ -314,7 +312,7 @@ function AccountQuotaCard({
                         style={{
                           width: `${percent}%`,
                           backgroundColor:
-                            isAntigravity && percent <= 25 ? "var(--warning)" : color,
+                            isAntigravity && percent >= 75 ? "var(--warning)" : color,
                         }}
                       />
                     </div>
@@ -346,7 +344,6 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
   const presentations = new Map([[environmentId, presentation]]);
   const accounts = collectLimitAccounts(presentations);
   const notices = collectLimitNotices(presentations);
-  const externalLinks = collectExternalUsageLinks(presentations);
   const refreshDisabled =
     isRefreshing || !canRefresh || presentation.connection.phase !== "connected";
 
@@ -433,18 +430,6 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
         >
           {notice}
         </p>
-      ))}
-      {externalLinks.map((link) => (
-        <div key={link.url} className="self-start">
-          <Button
-            variant="link"
-            size="xs"
-            onClick={() => void ensureLocalApi().shell.openExternal(link.url)}
-          >
-            {link.label}
-            <ExternalLinkIcon className="size-3" aria-hidden />
-          </Button>
-        </div>
       ))}
     </section>
   );

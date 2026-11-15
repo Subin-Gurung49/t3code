@@ -1824,7 +1824,9 @@ export function ThreadsSettingsPanel() {
     promptPolishInstanceId,
     promptPolishModel,
   );
-  const isPromptPolishModelDirty = settings.promptPolishModelSelection !== null;
+  const mixedPromptPolishModel = useScopedSettingsMixed(["promptPolishModelSelection"]);
+  const isPromptPolishModelDirty =
+    settings.promptPolishModelSelection !== null || mixedPromptPolishModel;
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
 
@@ -2169,9 +2171,11 @@ export function ThreadsSettingsPanel() {
                   instanceEntries={promptPolishInstanceEntries}
                   modelOptionsByInstance={promptPolishModelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  {...(promptPolishSelection === null
-                    ? { triggerLabel: "Off (select a model)" }
-                    : {})}
+                  {...(mixedPromptPolishModel
+                    ? { triggerLabel: "Mixed" }
+                    : promptPolishSelection === null
+                      ? { triggerLabel: "Off (select a model)" }
+                      : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
                   {...(environmentId
                     ? {

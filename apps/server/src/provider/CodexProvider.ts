@@ -119,6 +119,12 @@ function routesToNativeOpenai(config: unknown): boolean {
   );
 }
 
+function routesThroughLoopback(config: unknown): boolean {
+  const baseUrl = codexRouteBaseUrl(config);
+  if (!baseUrl || !URL.canParse(baseUrl)) return false;
+  return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(baseUrl).hostname);
+}
+
 /** The origin of the custom endpoint Codex sends model requests to, if it uses one. */
 export function codexCustomEndpoint(config: unknown): string | undefined {
   const baseUrl = codexRouteBaseUrl(config);
@@ -128,12 +134,14 @@ export function codexCustomEndpoint(config: unknown): string | undefined {
     : undefined;
 }
 
-// A stored login does not mean this provider's traffic spends that login's quota.
+// Keep account-level ChatGPT quota visible when a local Codex proxy is configured.
 export const codexRoutesSpendNativeQuota = (
   account: CodexSchema.V2GetAccountResponse,
   config: unknown,
 ): boolean =>
-  account.requiresOpenaiAuth && account.account?.type !== "apiKey" && routesToNativeOpenai(config);
+  account.requiresOpenaiAuth &&
+  account.account?.type !== "apiKey" &&
+  (routesToNativeOpenai(config) || routesThroughLoopback(config));
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;

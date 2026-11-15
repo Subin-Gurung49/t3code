@@ -285,6 +285,12 @@ import {
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { useComposerDictation } from "./useComposerDictation";
+import {
+  compactComposerDictationTakesFooter,
+  shouldShowComposerSpeechControls,
+  shouldRenderComposerFooter,
+  usesEnvironmentSpeechShortcut,
+} from "./composerDictation.logic";
 import { ComposerForkBars } from "./ComposerForkExtensions";
 import { ComposerDictationButton } from "./ComposerDictationBar";
 import { ComposerPolishButton } from "./ComposerPolishBar";
@@ -1824,6 +1830,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const dictation = useComposerDictation({
+    ownerKey: attachmentTargetKey,
+    readPrompt: () => promptRef.current,
+    onPromptChange: (value, expandedCursor) => {
+      const collapsedCursor = collapseExpandedComposerCursor(
+        value,
+        expandedCursor,
+        isLiteralPendingAnswer,
+      );
+      onPromptChangeStable(
+        value,
+        collapsedCursor,
+        expandedCursor,
+        false,
+        isLiteralPendingAnswer ? [] : collectInlineContextIds(value),
+      );
+      return collapsedCursor;
+    },
+    readSelectionRange: () =>
+      composerEditorRef.current?.readSelectionRange() ?? {
+        start: promptRef.current.length,
+        end: promptRef.current.length,
+      },
+    focusEditorAt: (cursor) => {
+      composerEditorRef.current?.focusAt(cursor);
+    },
+  });
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
@@ -1852,9 +1885,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
-  const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const speechInputActive = speechInput.blocksSubmission;
+  const voiceInputActive = speechInputActive || dictation.isBusy;
+  const showSpeechInputControls = shouldShowComposerSpeechControls({
+    nativeDictationAvailable: dictation.isAvailable,
+    environmentSpeechAvailable: speechInput.available,
+    speechInputPhase: speechInput.state.phase,
+    setupOpen: speechInput.setup.open,
+  });
   // A compact footer gives the dictation capsule the whole row beside the send button.
-  const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
+  const dictationTakesFooter = compactComposerDictationTakesFooter(
+    isComposerFooterCompact,
+    speechInput.state.phase,
+  );
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
   const submissionBlocked = isComposerSubmissionBlocked({
     submissionTarget,
@@ -1866,13 +1909,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // The pending Submit button follows the answer's own blockers, matching submitComposer.
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
-    (speechInput.preparing ? "Preparing voice input" : null);
+    (speechInput.preparing || dictation.state.phase === "preparing"
+      ? "Preparing voice input"
+      : null);
   const primaryActionEnvironmentUnavailable =
     environmentUnavailable !== null ||
     (!activePendingProgress && (noProviderAvailable || projectSelectionRequired));
+  const dictationShortcutSpeech = usesEnvironmentSpeechShortcut(
+    dictation.isAvailable,
+    speechInput.state.phase,
+  )
+    ? speechInput
+    : {
+        available: dictation.isAvailable,
+        state: dictation.state,
+        start: () => dictation.start(),
+        stop: async () => dictation.stop(),
+        cancel: () => dictation.cancel(),
+      };
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
-    speech: speechInput,
+    speech: dictationShortcutSpeech,
     disabled: dictationDisabled,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
@@ -2124,34 +2181,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return composerSendState.hasSendableContent;
   };
 
-  const dictation = useComposerDictation({
-    ownerKey: attachmentTargetKey,
-    readPrompt: () => promptRef.current,
-    onPromptChange: (value, expandedCursor) => {
-      const collapsedCursor = collapseExpandedComposerCursor(
-        value,
-        expandedCursor,
-        isLiteralPendingAnswer,
-      );
-      onPromptChangeStable(
-        value,
-        collapsedCursor,
-        expandedCursor,
-        false,
-        isLiteralPendingAnswer ? [] : collectInlineContextIds(value),
-      );
-      return collapsedCursor;
-    },
-    readSelectionRange: () =>
-      composerEditorRef.current?.readSelectionRange() ?? {
-        start: promptRef.current.length,
-        end: promptRef.current.length,
-      },
-    focusEditorAt: (cursor) => {
-      composerEditorRef.current?.focusAt(cursor);
-    },
-  });
-
   const canPolishPrompt = useAtomValue(
     orchestrationEnvironment.polishPrompt.permissionAtom(environmentId ?? null),
   );
@@ -2182,9 +2211,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
     polish.cancel();
-    if (dictation.isBusy || voiceInputActive) {
+    if (dictation.isBusy) {
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      dictation.submitAfterDictation(() =>
+        submitComposerRef.current(dispatchMode, submissionIntent),
+      );
+      return false;
+    }
+    if (speechInputActive) {
+      event?.preventDefault();
+      speechInput.submitAfterDictation(() =>
+        submitComposerRef.current(dispatchMode, submissionIntent),
+      );
       return false;
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
@@ -2253,7 +2291,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
   }, [submitComposerStable]);
   useDictationSubmissionShortcut({
-    enabled: voiceInputActive && !speechInput.preparing,
+    enabled: voiceInputActive && !speechInput.preparing && dictation.state.phase !== "preparing",
     formRef: composerFormRef,
     onKeyDown: (event) => {
       const intent = composerSubmissionIntentForKey({
@@ -3708,7 +3746,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
                       activePendingIsResponding ||
-                      speechInput.freezesEditor
+                      speechInput.freezesEditor ||
+                      dictation.isBusy
                     }
                   />
                 </ComposerContextActionsContext>
@@ -3741,7 +3780,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
-            <ComposerForkBars dictation={dictation} polish={polish} />
+            <ComposerForkBars
+              dictation={dictation}
+              polish={polish}
+              disableDictationRetry={speechInputActive}
+            />
 
             {speechInput.preview ? (
               // column-reverse pins the scroll to the bottom; the single inner div keeps the text in normal order.
@@ -3756,7 +3799,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             ) : null}
 
-            {isComposerCollapsedMobile && speechInput.state.phase === "idle" ? null : (
+            {shouldRenderComposerFooter(isComposerCollapsedMobile, speechInput.state.phase) ? (
               <div
                 data-chat-composer-footer="true"
                 className={cn(
@@ -3790,6 +3833,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {dictation.isAvailable ? (
                       <ComposerDictationButton
                         isBusy={dictation.isBusy}
+                        disabled={speechInputActive}
                         onClick={dictation.toggle}
                       />
                     ) : null}
@@ -3848,7 +3892,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     keepFullHistory={props.keepFullHistory}
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                   >
-                    {speechInput.available ? (
+                    {speechInput.available && showSpeechInputControls ? (
                       <>
                         <ComposerSpeechRecordingPill
                           state={speechInput.state}
@@ -3856,7 +3900,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
-                          disabled={dictationDisabled}
+                          disabled={dictationDisabled || dictation.isBusy}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
                           onCancel={() => speechInput.cancel()}
@@ -3864,31 +3908,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         />
                         <ComposerSpeechButton
                           state={speechInput.state}
-                          shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
+                          shortcutLabel={dictation.isAvailable ? null : dictationShortcutLabel}
+                          disabled={dictationDisabled || dictation.isBusy}
                           onStart={() => void speechInput.start()}
                         />
                       </>
                     ) : null}
-                    <VoiceInputSetup
-                      environmentId={speechInput.transcriptionEnvironmentId}
-                      open={speechInput.setup.open}
-                      step={speechInput.setup.step}
-                      status={speechInput.status}
-                      model={speechInput.setup.model}
-                      language={speechInput.setup.language}
-                      downloading={speechInput.setup.downloading}
-                      error={speechInput.setup.error}
-                      onOpenChange={speechInput.setup.setOpen}
-                      onRetryCatalog={speechInput.setup.retryCatalog}
-                      onDownload={() => void speechInput.setup.download()}
-                      onCancelDownload={() => void speechInput.setup.cancelDownload()}
-                      onStartRecording={() => void speechInput.setup.startRecording()}
-                    />
+                    {showSpeechInputControls ? (
+                      <VoiceInputSetup
+                        environmentId={speechInput.transcriptionEnvironmentId}
+                        open={speechInput.setup.open}
+                        step={speechInput.setup.step}
+                        status={speechInput.status}
+                        model={speechInput.setup.model}
+                        language={speechInput.setup.language}
+                        downloading={speechInput.setup.downloading}
+                        error={speechInput.setup.error}
+                        onOpenChange={speechInput.setup.setOpen}
+                        onRetryCatalog={speechInput.setup.retryCatalog}
+                        onDownload={() => void speechInput.setup.download()}
+                        onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                        onStartRecording={() => void speechInput.setup.startRecording()}
+                      />
+                    ) : null}
                   </ComposerFooterPrimaryActions>
                 </div>
               </div>
-            )}
+            ) : null}
             {showInlineRestingControls ? (
               <div className="h-8">
                 <div

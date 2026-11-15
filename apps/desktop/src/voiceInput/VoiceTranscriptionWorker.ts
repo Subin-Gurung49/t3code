@@ -1,3 +1,4 @@
+import type { AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
 import {
   decodeWavToFloat32,
   joinTranscriptionSegments,
@@ -56,7 +57,7 @@ export type VoiceTranscriptionWorkerResponse =
 const cancelledRequestIds = new Set<string>();
 
 // Cached pipeline across requests in this worker process
-let cachedPipeline: any = null;
+let cachedPipeline: AutomaticSpeechRecognitionPipeline | null = null;
 let cachedModelName: string | null = null;
 
 export function normalizeAudioBytes(raw: unknown): Uint8Array {
@@ -144,7 +145,7 @@ async function handlePrepare(
       modelName,
       locale,
     } satisfies VoiceTranscriptionWorkerResponse);
-  } catch (error: any) {
+  } catch (error) {
     process.send?.({
       type: "prepare_result",
       requestId: request.requestId,
@@ -214,12 +215,7 @@ async function handleTranscribe(
         return;
       }
 
-      const text =
-        typeof result === "object" && result !== null && "text" in result
-          ? String(result.text).trim()
-          : Array.isArray(result) && result[0] && "text" in result[0]
-            ? String(result[0].text).trim()
-            : "";
+      const text = result.text.trim();
 
       if (text.length > 0) {
         segmentTexts.push(text);
@@ -234,7 +230,7 @@ async function handleTranscribe(
       success: true,
       text,
     } satisfies VoiceTranscriptionWorkerResponse);
-  } catch (error: any) {
+  } catch (error) {
     process.send?.({
       type: "transcribe_result",
       requestId: request.requestId,

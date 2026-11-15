@@ -32,6 +32,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
 
 export function ComposerDictationBar(props: {
   readonly dictation: UseComposerDictationReturn;
+  readonly disabled?: boolean;
   readonly className?: string;
 }) {
   const { state, presentation, audioLevels, stop, cancel, start, openSettings } = props.dictation;
@@ -60,6 +61,7 @@ export function ComposerDictationBar(props: {
           ) : (
             <button
               type="button"
+              disabled={props.disabled}
               onClick={start}
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive font-medium transition-colors"
             >
@@ -150,6 +152,7 @@ export function ComposerDictationBar(props: {
 
 export function ComposerDictationButton(props: {
   readonly isBusy: boolean;
+  readonly disabled?: boolean;
   readonly onClick: () => void;
   readonly className?: string;
 }) {
@@ -161,6 +164,7 @@ export function ComposerDictationButton(props: {
             type="button"
             variant={props.isBusy ? "secondary" : "ghost"}
             size="icon-sm"
+            disabled={props.disabled}
             data-composer-action="dictate"
             aria-label="Dictate (Mod+Shift+D)"
             onPointerDown={(event) => event.preventDefault()}
