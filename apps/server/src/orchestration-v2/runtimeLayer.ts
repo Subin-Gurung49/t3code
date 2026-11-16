@@ -335,7 +335,11 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
 );
 const layerThreadPromptPolishProvided = ThreadPromptPolishService.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
+    ),
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
