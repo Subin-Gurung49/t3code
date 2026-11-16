@@ -112,10 +112,17 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
       : [];
     const windows: ServerProviderUsageWindow[] = [];
     if (go) {
+      // Go renews on the billing date; a fixed 30-day window skews monthly pace.
+      const monthlyResetsAt = DateTime.makeUnsafe(go.monthly.resetsAt);
+      const monthlyDurationMins = Math.round(
+        (DateTime.toEpochMillis(monthlyResetsAt) -
+          DateTime.toEpochMillis(DateTime.subtract(monthlyResetsAt, { months: 1 }))) /
+          60_000,
+      );
       for (const [key, kind, label, duration] of [
         ["rolling", "session", "Session", 300],
         ["weekly", "weekly", "Weekly", 10080],
-        ["monthly", "monthly", "Monthly", undefined],
+        ["monthly", "monthly", "Monthly", monthlyDurationMins],
       ] as const) {
         const meter = go[key];
         windows.push({
@@ -124,7 +131,7 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
           label: `Go · ${label}`,
           usedPercent: meter.limited ? 100 : clampPercent(meter.percent),
           resetsAt: resetTime(meter.resetsAt),
-          ...(duration === undefined ? {} : { windowDurationMins: duration }),
+          windowDurationMins: duration,
         });
       }
     }
