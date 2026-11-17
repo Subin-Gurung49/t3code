@@ -149,3 +149,5 @@ export const VOICE_INPUT_PREPARE_CHANNEL = "desktop:voice-input-prepare";
 export const VOICE_INPUT_TRANSCRIBE_CHANNEL = "desktop:voice-input-transcribe";
 export const VOICE_INPUT_CANCEL_CHANNEL = "desktop:voice-input-cancel";
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

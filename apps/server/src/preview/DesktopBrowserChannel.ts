@@ -47,7 +47,7 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
     readonly isShown: (key: DesktopTabKey) => boolean;
-    /** Subscribe before checking so concurrent shown reports cannot be missed. */
+    /** Resolves true once the tab is shown, or false on timeout. */
     readonly awaitShown: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     /** A load failure the desktop saw, possibly before the server connected to the tab. */
     readonly loadFailure: (key: DesktopTabKey) => PreviewAutomationLoadError | undefined;

@@ -3335,10 +3335,12 @@ it.effect("preview_open reports a hidden desktop tab it reveals as visible", () 
       });
       const tabId = PreviewTabId.make(created.tabId!);
       expect(created.visible).toBe(false);
+      // Like the desktop renderer, the docked panel reports the tab shown after the reveal arrives.
       yield* Effect.gen(function* () {
         let event;
         do event = yield* PubSub.take(events);
         while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        // The report crosses the client, the desktop main process and its pipe, so it lands a task later.
         yield* Effect.yieldNow;
         yield* Effect.sync(() => shownDesktopTabs.add(tabId));
       }).pipe(Effect.forkScoped);
