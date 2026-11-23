@@ -176,6 +176,22 @@ describe("quota summaries", () => {
     expect(pace?.deltaPercent).toBeCloseTo(35 - 100 / 7);
   });
 
+  it("measures pace from an observed window start instead of the nominal duration", () => {
+    // A quota reset twice in a week: the real window began 3.5 days ago and ends in ~5.7 days.
+    // The nominal 7-day duration would claim only 1.3 days elapsed and misreport "over pace".
+    const anchored: ServerProviderUsageWindow = {
+      ...weekly,
+      usedPercent: 25,
+      resetsAt: "2026-10-30T06:41:00.000Z",
+      windowStartAt: "2026-10-20T18:00:00.000Z",
+    };
+    const pace = quotaPace(anchored, now);
+    const realWindowMs = Date.parse(anchored.resetsAt!) - Date.parse(anchored.windowStartAt!);
+    const elapsedMs = now - Date.parse(anchored.windowStartAt!);
+    expect(pace?.deltaPercent).toBeCloseTo(25 - (elapsedMs / realWindowMs) * 100);
+    expect(pace?.deltaPercent).toBeLessThan(0);
+  });
+
   it("uses flat remaining allowance during the final day instead of inflating a daily budget", () => {
     const pace = quotaPace({ ...weekly, resetsAt: "2026-10-24T18:00:00.000Z" }, now);
     expect(pace?.dailyPercent).toBeNull();

@@ -47,6 +47,31 @@ export function makeUnavailableUsageLimits(input: {
   };
 }
 
+const RESET_ADVANCE_MIN_MS = 60 * 60 * 1000;
+const RESET_USAGE_DROP_MIN_POINTS = 5;
+
+/**
+ * A fresh window whose reset time jumped forward while its usage dropped is a real reset.
+ * Anchor the new window at the last probe; a rolling timer that merely drifts forward is not.
+ */
+function anchorResetWindow(
+  previous: ServerProviderUsageLimits | undefined,
+  existing: ServerProviderUsageWindow | undefined,
+  window: ServerProviderUsageWindow,
+): ServerProviderUsageWindow {
+  if (existing === undefined) return window;
+  const carried = window.windowStartAt ?? existing.windowStartAt;
+  const advanced =
+    window.resetsAt !== undefined &&
+    existing.resetsAt !== undefined &&
+    Date.parse(window.resetsAt) - Date.parse(existing.resetsAt) >= RESET_ADVANCE_MIN_MS;
+  const dropped = existing.usedPercent - window.usedPercent >= RESET_USAGE_DROP_MIN_POINTS;
+  const startAt = advanced && dropped ? previous?.checkedAt : carried;
+  return startAt === undefined || startAt === window.windowStartAt
+    ? window
+    : { ...window, windowStartAt: startAt };
+}
+
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
@@ -61,7 +86,7 @@ export function applyUsageLimitsUpdate(input: {
   let changed = false;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
-    const next: ServerProviderUsageWindow = {
+    const next = anchorResetWindow(previous, existing, {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
       ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
@@ -70,7 +95,7 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
-    };
+    });
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
       changed = true;
@@ -106,6 +131,7 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
         a.providerIds.length === b.providerIds.length &&
         a.providerIds.every((id, index) => id === b.providerIds?.[index]))) &&
     a.resetsAt === b.resetsAt &&
+    a.windowStartAt === b.windowStartAt &&
     a.windowDurationMins === b.windowDurationMins
   );
 }
@@ -127,5 +153,12 @@ export function resolveUsageLimitsAfterProbe(input: {
   ) {
     return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
   }
-  return probed;
+  if (probed === undefined || probed.windows.length === 0) return probed;
+  const publishedById = new Map(published?.windows.map((window) => [window.id, window] as const));
+  const windows = probed.windows.map((window) =>
+    anchorResetWindow(published, publishedById.get(window.id), window),
+  );
+  return windows.some((window, index) => window !== probed.windows[index])
+    ? { ...probed, windows }
+    : probed;
 }

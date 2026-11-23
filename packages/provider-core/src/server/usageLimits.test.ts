@@ -106,6 +106,47 @@ describe("applyUsageLimitsUpdate", () => {
   });
 });
 
+describe("usage reset anchoring", () => {
+  const previousWeekly = {
+    id: "weekly",
+    kind: "weekly" as const,
+    label: "Weekly",
+    usedPercent: 80,
+    resetsAt: "2026-11-25T12:00:00.000Z",
+    windowDurationMins: 10_080,
+  };
+  const previousLimits = { checkedAt: "2026-11-20T12:00:00.000Z", windows: [previousWeekly] };
+
+  it("anchors a new window at the last probe when a reset actually happened", () => {
+    const probed = {
+      checkedAt: "2026-11-23T12:00:00.000Z",
+      windows: [{ ...previousWeekly, usedPercent: 15, resetsAt: "2026-11-30T12:00:00.000Z" }],
+    };
+    const next = resolveUsageLimitsAfterProbe({ published: previousLimits, probed });
+    expect(next?.windows[0]?.windowStartAt).toBe("2026-11-20T12:00:00.000Z");
+  });
+
+  it("keeps the existing anchor when usage only moves within the same window", () => {
+    const anchoredWindow = { ...previousWeekly, windowStartAt: "2026-11-18T12:00:00.000Z" };
+    const anchored = { checkedAt: "2026-11-22T12:00:00.000Z", windows: [anchoredWindow] };
+    const probed = {
+      checkedAt: "2026-11-23T12:00:00.000Z",
+      windows: [{ ...anchoredWindow, usedPercent: 30 }],
+    };
+    const next = resolveUsageLimitsAfterProbe({ published: anchored, probed });
+    expect(next?.windows[0]?.windowStartAt).toBe("2026-11-18T12:00:00.000Z");
+  });
+
+  it("does not anchor a rolling reset timer that advances without a usage drop", () => {
+    const probed = {
+      checkedAt: "2026-11-23T12:00:00.000Z",
+      windows: [{ ...previousWeekly, usedPercent: 85, resetsAt: "2026-11-30T12:00:00.000Z" }],
+    };
+    const next = resolveUsageLimitsAfterProbe({ published: previousLimits, probed });
+    expect(next?.windows[0]?.windowStartAt).toBeUndefined();
+  });
+});
+
 describe("resolveUsageLimitsAfterProbe", () => {
   it("uses read order for windows while taking metadata from the successful probe", () => {
     const live = {

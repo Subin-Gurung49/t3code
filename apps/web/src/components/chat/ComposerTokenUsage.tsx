@@ -292,8 +292,8 @@ export function ComposerTokenUsage({
   const contextDescription =
     contextWindow === null
       ? null
-      : contextWindow.maxTokens === null
-        ? contextWindow.remainingTokens === null
+      : contextWindow.maxTokens == null
+        ? contextWindow.remainingTokens == null
           ? gt("Context window: {used} tokens in use.", {
               used: formatTokens(contextWindow.usedTokens),
             })
@@ -301,7 +301,7 @@ export function ComposerTokenUsage({
               used: formatTokens(contextWindow.usedTokens),
               remaining: formatTokens(contextWindow.remainingTokens),
             })
-        : contextWindow.remainingTokens === null
+        : contextWindow.remainingTokens == null
           ? gt("Context window: {used} of {max} tokens in use.", {
               used: formatTokens(contextWindow.usedTokens),
               max: formatTokens(contextWindow.maxTokens),
@@ -334,14 +334,14 @@ export function ComposerTokenUsage({
   const contextSummary =
     contextWindow === null
       ? null
-      : contextWindow.maxTokens === null
-        ? contextWindow.remainingTokens === null
+      : contextWindow.maxTokens == null
+        ? contextWindow.remainingTokens == null
           ? gt("{used} tokens used", { used: formatTokens(contextWindow.usedTokens) })
           : gt("{used} tokens used · {remaining} remaining", {
               used: formatTokens(contextWindow.usedTokens),
               remaining: compact(contextWindow.remainingTokens),
             })
-        : contextWindow.remainingTokens === null
+        : contextWindow.remainingTokens == null
           ? gt("{used} / {max} tokens", {
               used: formatTokens(contextWindow.usedTokens),
               max: formatTokens(contextWindow.maxTokens),

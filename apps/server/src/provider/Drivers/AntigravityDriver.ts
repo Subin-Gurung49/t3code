@@ -95,6 +95,14 @@ const RememberedRuntimeModes = Schema.fromJsonString(
 );
 const decodeRememberedRuntimeModes = Schema.decodeUnknownOption(RememberedRuntimeModes);
 const encodeRememberedRuntimeModes = Schema.encodeSync(RememberedRuntimeModes);
+const RememberedResetAnchors = Schema.fromJsonString(
+  Schema.Struct({
+    authMethod: Schema.String,
+    anchors: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+const decodeRememberedResetAnchors = Schema.decodeUnknownOption(RememberedResetAnchors);
+const encodeRememberedResetAnchors = Schema.encodeSync(RememberedResetAnchors);
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
@@ -187,6 +195,18 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const profileDirectory = directories.profile;
+    // Quota windows are rolling; keep their observed starts so pace survives a restart.
+    const resetAnchorsPath = path.join(profileDirectory, "t3-usage-reset-anchors.json");
+    const rememberedUsageResetAnchors = yield* fileSystem.readFileString(resetAnchorsPath).pipe(
+      Effect.map((contents) =>
+        decodeRememberedResetAnchors(contents).pipe(
+          Option.filter((saved) => saved.authMethod === auth.authMethod),
+          Option.map((saved) => saved.anchors),
+          Option.getOrUndefined,
+        ),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
     // Only a session reports whether agy offers Auto, so keep the last answer across restarts.
     const runtimeModesPath = path.join(profileDirectory, "t3-runtime-modes.json");
     const rememberedRuntimeModes = yield* fileSystem.readFileString(runtimeModesPath).pipe(
@@ -607,6 +627,7 @@ export const AntigravityDriver: ProviderDriver<
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       ...(rememberedRuntimeModes ? { rememberedRuntimeModes } : {}),
+      ...(rememberedUsageResetAnchors ? { rememberedUsageResetAnchors } : {}),
       rememberRuntimeModes: (modes) =>
         writeFileStringAtomically({
           filePath: runtimeModesPath,
@@ -615,6 +636,15 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.catch(() => Effect.logWarning("Could not save Antigravity permission modes.")),
+        ),
+      rememberUsageResetAnchors: (anchors) =>
+        writeFileStringAtomically({
+          filePath: resetAnchorsPath,
+          contents: encodeRememberedResetAnchors({ authMethod: auth.authMethod, anchors }),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch(() => Effect.logWarning("Could not save Antigravity quota reset anchors.")),
         ),
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

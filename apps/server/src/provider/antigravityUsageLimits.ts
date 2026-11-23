@@ -496,7 +496,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
                 HttpClientRequest.bodyJsonUnsafe({
-                  ...(token.project_id ? { cloudaicompanionProject: token.project_id } : {}),
+                  ...(projectId ? { cloudaicompanionProject: projectId } : {}),
                   metadata: {
                     ideType: "ANTIGRAVITY",
                     ideName: "antigravity",

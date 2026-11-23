@@ -8,6 +8,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
@@ -181,6 +182,11 @@ interface AntigravityProviderOptions {
   /** Modes the last session advertised, saved because initialize alone does not report them. */
   readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly rememberRuntimeModes?: (modes: ReadonlyArray<RuntimeMode>) => Effect.Effect<void>;
+  /** Wall-clock starts of observed quota windows, restored from disk across restarts. */
+  readonly rememberedUsageResetAnchors?: Readonly<Record<string, string>>;
+  readonly rememberUsageResetAnchors?: (
+    anchors: Readonly<Record<string, string>>,
+  ) => Effect.Effect<void>;
 }
 
 const RUNTIME_MODES_WITHOUT_AUTO = [
@@ -268,6 +274,26 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     Effect.flatMap((state) => options.stampIdentity(state.draft)),
   );
 
+  const anchorsOf = (limits: ServerProviderUsageLimits | undefined) => {
+    const anchors: Record<string, string> = {};
+    for (const window of limits?.windows ?? []) {
+      if (window.windowStartAt !== undefined) anchors[window.id] = window.windowStartAt;
+    }
+    return anchors;
+  };
+  const applyRememberedAnchors = (limits: ServerProviderUsageLimits | undefined) => {
+    const remembered = options.rememberedUsageResetAnchors;
+    if (limits === undefined || remembered === undefined) return limits;
+    return {
+      ...limits,
+      windows: limits.windows.map((window) =>
+        window.windowStartAt === undefined && remembered[window.id] !== undefined
+          ? { ...window, windowStartAt: remembered[window.id] }
+          : window,
+      ),
+    };
+  };
+
   // The quota read can take 30 seconds, so it never blocks readiness or a session start.
   // One read runs at a time; sign-in and sign-out interrupt it so a stale account never lands.
   const usageRead = yield* FiberHandle.make();
@@ -280,17 +306,32 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       options.probeUsage.pipe(
         Effect.flatMap((report) => {
           const usage = splitUsageReport(report);
-          return SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              auth: usage?.plan ? { ...state.draft.auth, label: usage.plan } : state.draft.auth,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed: usage?.limits ?? state.draft.usageLimits,
-              }),
-            },
-          }));
+          return SubscriptionRef.modify(metadata, (state) => {
+            const usageLimits = resolveUsageLimitsAfterProbe({
+              published: state.draft.usageLimits,
+              probed: applyRememberedAnchors(usage?.limits ?? state.draft.usageLimits),
+            });
+            const anchors = anchorsOf(usageLimits);
+            const changed =
+              JSON.stringify(anchors) !== JSON.stringify(anchorsOf(state.draft.usageLimits));
+            return [
+              changed ? anchors : null,
+              {
+                ...state,
+                draft: {
+                  ...state.draft,
+                  auth: usage?.plan ? { ...state.draft.auth, label: usage.plan } : state.draft.auth,
+                  usageLimits,
+                },
+              },
+            ] as const;
+          }).pipe(
+            Effect.flatMap((anchors) =>
+              anchors === null || options.rememberUsageResetAnchors === undefined
+                ? Effect.void
+                : options.rememberUsageResetAnchors(anchors),
+            ),
+          );
         }),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(

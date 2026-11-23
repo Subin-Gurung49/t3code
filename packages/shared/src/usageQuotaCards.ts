@@ -118,7 +118,12 @@ export function quotaPace(window: ServerProviderUsageWindow, now: number) {
   if (!Number.isFinite(resetAt) || resetAt <= now) return null;
   const daysLeft = (resetAt - now) / DAY_MS;
   const remaining = 100 - window.usedPercent;
-  const elapsed = elapsedShare(window, now);
+  // A tracked start beats the nominal duration: quota resets need not be evenly spaced.
+  const startAt = window.windowStartAt === undefined ? NaN : Date.parse(window.windowStartAt);
+  const elapsed =
+    Number.isFinite(startAt) && resetAt > startAt
+      ? Math.max(0, Math.min(1, (now - startAt) / (resetAt - startAt)))
+      : elapsedShare(window, now);
   return {
     remainingPercent: remaining,
     dailyPercent: daysLeft >= 1 ? remaining / daysLeft : null,

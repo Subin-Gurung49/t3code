@@ -6,11 +6,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type { EnvironmentId, ServerProviderUsageWindow } from "@t3tools/contracts";
-import {
-  collectLimitAccounts,
-  collectLimitNotices,
-  type LimitAccount,
-} from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
+import { collectLimitNotices } from "@t3tools/shared/usageLimitsCopy";
 import {
   deepSeekPricingPeriod,
   quotaCardModel,

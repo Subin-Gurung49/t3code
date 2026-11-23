@@ -2365,14 +2365,14 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           settingKeys={["promptPolishModelSelection"]}
-          {...searchableSetting("prompt-polish-model")}
+          {...setting("prompt-polish-model")}
           description={gt(
             "Used to polish composer drafts. Requires an authenticated ChatGPT Codex account or an OpenCode Go model on the selected environment.",
           )}
           resetAction={
             hasServerTargets && isPromptPolishModelDirty ? (
               <SettingResetButton
-                label={gt("prompt polish model")}
+                ariaLabel={gt("prompt polish model")}
                 onClick={() => updateSettings({ promptPolishModelSelection: null })}
               />
             ) : null

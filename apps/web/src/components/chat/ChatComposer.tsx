@@ -1988,6 +1988,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expandedCursor,
         false,
         isLiteralPendingAnswer ? [] : collectInlineContextIds(value),
+        value !== promptRef.current,
       );
       return collapsedCursor;
     },
@@ -2368,6 +2369,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         value.length,
         false,
         isLiteralPendingAnswer ? [] : collectInlineContextIds(value),
+        value !== promptRef.current,
       );
     },
     subscribeToChanges: (onChange) => useComposerDraftStore.subscribe(onChange),
