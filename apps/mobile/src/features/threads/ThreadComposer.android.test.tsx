@@ -249,7 +249,7 @@ it("keeps Android dictation on the provider's transcription choice", () => {
     hasCompactableConversation: false,
     hidden: false,
     onChangeDraftMessage: vi.fn(),
-    onNativePasteImages: async () => undefined,
+    onNativePasteImages: async () => false,
     onNativePasteText: async () => undefined,
     onPickDraftFiles: async () => undefined,
     onPickDraftMedia: async () => undefined,

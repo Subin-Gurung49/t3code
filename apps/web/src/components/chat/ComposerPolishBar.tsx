@@ -1,5 +1,6 @@
 import { CheckIcon, Loader2Icon, PencilIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import React from "react";
+import { T, useGT } from "gt-react";
 
 import { cn } from "../../lib/utils.ts";
 import { Button } from "../ui/button.tsx";
@@ -11,6 +12,7 @@ export function ComposerPolishBar(props: {
   readonly className?: string;
 }) {
   const { state, apply, cancel, restoreOriginal, dismissError } = props.polish;
+  const gt = useGT();
 
   if (state.phase === "idle" && !state.restorableOriginal) {
     return null;
@@ -24,7 +26,7 @@ export function ComposerPolishBar(props: {
           props.className,
         )}
       >
-        <span className="truncate">{state.error ?? "Prompt polish failed."}</span>
+        <span className="truncate">{state.error ?? gt("Prompt polish failed.")}</span>
         <div className="flex items-center gap-1 shrink-0">
           <Tooltip>
             <TooltipTrigger
@@ -33,13 +35,15 @@ export function ComposerPolishBar(props: {
                   type="button"
                   onClick={dismissError}
                   className="p-1 rounded hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-colors"
-                  aria-label="Dismiss"
+                  aria-label={gt("Dismiss")}
                 >
                   <XIcon className="size-3.5" />
                 </button>
               }
             />
-            <TooltipPopup>Dismiss</TooltipPopup>
+            <TooltipPopup>
+              <T>Dismiss</T>
+            </TooltipPopup>
           </Tooltip>
         </div>
       </div>
@@ -56,16 +60,20 @@ export function ComposerPolishBar(props: {
       >
         <div className="flex items-center gap-2 min-w-0">
           <Loader2Icon className="size-3.5 animate-spin text-primary" />
-          <span className="font-medium">Polishing draft...</span>
+          <span className="font-medium">
+            <T>Polishing draft...</T>
+          </span>
         </div>
         <button
           type="button"
           onClick={cancel}
           className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-          aria-label="Cancel"
+          aria-label={gt("Cancel")}
         >
           <XIcon className="size-3.5" />
-          <span>Cancel</span>
+          <span>
+            <T>Cancel</T>
+          </span>
         </button>
       </div>
     );
@@ -82,16 +90,18 @@ export function ComposerPolishBar(props: {
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 font-medium text-primary">
             <PencilIcon className="size-3.5" />
-            <span>Prompt polish preview</span>
+            <span>
+              <T>Prompt polish preview</T>
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <Button type="button" size="xs" variant="outline" onClick={cancel}>
               <XIcon className="size-3 mr-1" />
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button type="button" size="xs" variant="default" onClick={apply}>
               <CheckIcon className="size-3 mr-1" />
-              Apply
+              <T>Apply</T>
             </Button>
           </div>
         </div>
@@ -110,14 +120,18 @@ export function ComposerPolishBar(props: {
           props.className,
         )}
       >
-        <span>Prompt polished. Original draft preserved.</span>
+        <span>
+          <T>Prompt polished. Original draft preserved.</T>
+        </span>
         <button
           type="button"
           onClick={restoreOriginal}
           className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-muted text-foreground font-medium transition-colors"
         >
           <RotateCcwIcon className="size-3" />
-          <span>Restore original</span>
+          <span>
+            <T>Restore original</T>
+          </span>
         </button>
       </div>
     );
@@ -132,6 +146,7 @@ export function ComposerPolishButton(props: {
   readonly onClick: () => void;
   readonly className?: string;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -142,7 +157,7 @@ export function ComposerPolishButton(props: {
             size="icon-sm"
             disabled={props.disabled || props.isBusy}
             data-composer-action="polish"
-            aria-label="Polish prompt"
+            aria-label={gt("Polish prompt")}
             onPointerDown={(event) => event.preventDefault()}
             onClick={props.onClick}
             className={props.className}
@@ -151,7 +166,9 @@ export function ComposerPolishButton(props: {
           </Button>
         }
       />
-      <TooltipPopup>Polish prompt</TooltipPopup>
+      <TooltipPopup>
+        <T>Polish prompt</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }

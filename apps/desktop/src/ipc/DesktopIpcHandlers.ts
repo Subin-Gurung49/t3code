@@ -4,6 +4,11 @@ import * as Effect from "effect/Effect";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { cancelProviderAuthCallback, receiveProviderAuthCallback } from "./methods/providerAuth.ts";
 import {
+  appleSpeechAvailable,
+  appleSpeechPrepare,
+  appleSpeechTranscribe,
+} from "./methods/appleSpeech.ts";
+import {
   checkForUpdate,
   downloadUpdate,
   getUpdateState,
@@ -162,6 +167,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(appleSpeechAvailable);
+  yield* ipc.handle(appleSpeechPrepare);
+  yield* ipc.handle(appleSpeechTranscribe);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);

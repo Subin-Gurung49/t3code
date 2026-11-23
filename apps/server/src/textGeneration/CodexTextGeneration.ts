@@ -23,6 +23,7 @@ import {
   codexMcpListLaunchArgs,
   resolveCodexLaunchArgs,
 } from "../provider/codexLaunchArgs.ts";
+import { codexAppServerEnvironment } from "../provider/CodexProvider.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -43,7 +44,10 @@ type McpListResult =
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
 // Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
+// Codex also reads the legacy connectors key for apps.
 const CODEX_NO_PLUGIN_ARGS = [
+  "--config",
+  "features.connectors=false",
   "--config",
   "features.plugins=false",
   "--config",
@@ -301,7 +305,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
       const env = {
-        ...effectiveEnvironment,
+        ...codexAppServerEnvironment(effectiveEnvironment),
         ...(effectiveConfig.homePath
           ? {
               CODEX_HOME: expandHomePath(

@@ -1,5 +1,6 @@
 import { CheckIcon, MicIcon, RefreshCwIcon, SettingsIcon, XIcon } from "lucide-react";
 import React, { memo } from "react";
+import { T, useGT } from "gt-react";
 
 import { cn } from "../../lib/utils.ts";
 import { Button } from "../ui/button.tsx";
@@ -36,6 +37,7 @@ export function ComposerDictationBar(props: {
   readonly className?: string;
 }) {
   const { state, presentation, audioLevels, stop, cancel, start, openSettings } = props.dictation;
+  const gt = useGT();
 
   if (state.phase === "idle") return null;
 
@@ -47,7 +49,7 @@ export function ComposerDictationBar(props: {
           props.className,
         )}
       >
-        <span className="truncate">{state.error ?? "Dictation error"}</span>
+        <span className="truncate">{state.error ?? gt("Dictation error")}</span>
         <div className="flex items-center gap-1 shrink-0">
           {state.errorAction === "settings" ? (
             <button
@@ -56,7 +58,9 @@ export function ComposerDictationBar(props: {
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive font-medium transition-colors"
             >
               <SettingsIcon className="size-3" />
-              <span>Settings</span>
+              <span>
+                <T>Settings</T>
+              </span>
             </button>
           ) : (
             <button
@@ -66,7 +70,9 @@ export function ComposerDictationBar(props: {
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive font-medium transition-colors"
             >
               <RefreshCwIcon className="size-3" />
-              <span>Retry</span>
+              <span>
+                <T>Retry</T>
+              </span>
             </button>
           )}
           <Tooltip>
@@ -76,13 +82,15 @@ export function ComposerDictationBar(props: {
                   type="button"
                   onClick={cancel}
                   className="p-1 rounded hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-colors"
-                  aria-label="Dismiss"
+                  aria-label={gt("Dismiss")}
                 >
                   <XIcon className="size-3.5" />
                 </button>
               }
             />
-            <TooltipPopup>Dismiss</TooltipPopup>
+            <TooltipPopup>
+              <T>Dismiss</T>
+            </TooltipPopup>
           </Tooltip>
         </div>
       </div>
@@ -113,14 +121,18 @@ export function ComposerDictationBar(props: {
                 type="button"
                 onClick={cancel}
                 className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Cancel (Escape)"
+                aria-label={gt("Cancel (Escape)")}
               >
                 <XIcon className="size-3.5" />
-                <span>Cancel</span>
+                <span>
+                  <T>Cancel</T>
+                </span>
               </button>
             }
           />
-          <TooltipPopup>Cancel (Escape)</TooltipPopup>
+          <TooltipPopup>
+            <T>Cancel (Escape)</T>
+          </TooltipPopup>
         </Tooltip>
 
         {presentation.trailingAction === "confirm" && (
@@ -135,14 +147,18 @@ export function ComposerDictationBar(props: {
                     "flex items-center gap-1 px-2 py-1 rounded bg-primary text-primary-foreground font-medium shadow-xs transition-colors",
                     !presentation.confirmationEnabled && "opacity-50 cursor-not-allowed",
                   )}
-                  aria-label="Done (Enter)"
+                  aria-label={gt("Done (Enter)")}
                 >
                   <CheckIcon className="size-3.5" />
-                  <span>Done</span>
+                  <span>
+                    <T>Done</T>
+                  </span>
                 </button>
               }
             />
-            <TooltipPopup>Done (Enter)</TooltipPopup>
+            <TooltipPopup>
+              <T>Done (Enter)</T>
+            </TooltipPopup>
           </Tooltip>
         )}
       </div>
@@ -156,6 +172,7 @@ export function ComposerDictationButton(props: {
   readonly onClick: () => void;
   readonly className?: string;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -166,7 +183,7 @@ export function ComposerDictationButton(props: {
             size="icon-sm"
             disabled={props.disabled}
             data-composer-action="dictate"
-            aria-label="Dictate (Mod+Shift+D)"
+            aria-label={gt("Dictate (Mod+Shift+D)")}
             onPointerDown={(event) => event.preventDefault()}
             onClick={props.onClick}
             className={props.className}
@@ -175,7 +192,9 @@ export function ComposerDictationButton(props: {
           </Button>
         }
       />
-      <TooltipPopup>Dictate (Mod+Shift+D)</TooltipPopup>
+      <TooltipPopup>
+        <T>Dictate (Mod+Shift+D)</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }

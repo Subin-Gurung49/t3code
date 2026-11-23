@@ -9,7 +9,7 @@ import { useContext } from "react";
 
 export function useAtomCommand<A, E, W>(
   command: AtomCommand<W, A, E>,
-  options?: string | AtomCommandOptions,
+  options?: string | Omit<AtomCommandOptions, "signal">,
 ): (value: W, callOptions?: AtomCommandOptions) => Promise<AtomCommandResult<A, E>> {
   const registry = useContext(RegistryContext);
   const baseOptions = typeof options === "string" ? { label: options } : (options ?? {});

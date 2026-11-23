@@ -6,39 +6,42 @@ import {
   quotaCountdown,
   quotaPace,
 } from "@t3tools/shared/usageQuotaCards";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ResetCredits } from "./UsageLimitsSection";
 import { PROVIDER_LABEL, usageProviderKind, useProviderColors } from "./usageProviders";
 
-function shortWindowLabel(window: ServerProviderUsageWindow) {
+function shortWindowLabel(window: ServerProviderUsageWindow, resolve: MessageResolver = m) {
   if (window.kind === "session") {
     const minutes = window.windowDurationMins;
-    return minutes && minutes % 60 === 0 ? `${minutes / 60}h` : "Session";
+    return minutes && minutes % 60 === 0 ? `${minutes / 60}h` : resolve(msg("Session"));
   }
-  if (window.kind === "weekly") return "Weekly";
-  if (window.kind === "monthly") return "Monthly";
+  if (window.kind === "weekly") return resolve(msg("Weekly"));
+  if (window.kind === "monthly") return resolve(msg("Monthly"));
   return window.label;
 }
 
-function accountName(account: LimitAccount, isOpenCodeGo: boolean) {
-  if (account.driver === "codex") return "ChatGPT (Codex)";
-  if (isOpenCodeGo) return "OpenCode Go";
+function accountName(account: LimitAccount, isOpenCodeGo: boolean, resolve: MessageResolver = m) {
+  if (account.driver === "codex") return resolve(msg("ChatGPT (Codex)"));
+  if (isOpenCodeGo) return resolve(msg("OpenCode Go"));
   const kind = usageProviderKind(account.driver);
   return kind ? PROVIDER_LABEL[kind] : String(account.driver);
 }
 
 function AccountIdentity({ account }: { readonly account: LimitAccount }) {
+  const gt = useGT();
   const [revealed, setRevealed] = useState(false);
   if (account.email) {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+        accessibilityLabel={revealed ? gt("Hide account email") : gt("Reveal account email")}
         onPress={() => setRevealed((value) => !value)}
         className="self-start active:opacity-60"
       >
@@ -65,13 +68,17 @@ function windowColor(
 }
 
 function QuotaSummary({ window }: { readonly window: ServerProviderUsageWindow }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <View className="shrink-0 items-end">
       <Text className="text-2xl font-t3-medium tabular-nums text-foreground">
         {Math.round(window.usedPercent)}
         <Text className="text-sm text-foreground-muted">%</Text>
       </Text>
-      <Text className="text-3xs text-foreground-muted">{shortWindowLabel(window)} used</Text>
+      <Text className="text-3xs text-foreground-muted">
+        {gt("{window} used", { window: shortWindowLabel(window, m) })}
+      </Text>
     </View>
   );
 }
@@ -83,6 +90,7 @@ function QuotaFooter({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const m = useMessages();
   const countdown = quotaCountdown(window.resetsAt, now);
   const pace = quotaPace(window, now);
   const delta = pace?.deltaPercent ?? null;
@@ -90,8 +98,10 @@ function QuotaFooter({
     delta === null
       ? null
       : Math.abs(delta) < 0.5
-        ? "On pace"
-        : `${delta > 0 ? "Over" : "Under"} pace by ${Math.abs(delta).toFixed(1)}%`;
+        ? m(msg("On pace"))
+        : delta > 0
+          ? m(msg("Over pace by {percent}%", { percent: Math.abs(delta).toFixed(1) }))
+          : m(msg("Under pace by {percent}%", { percent: Math.abs(delta).toFixed(1) }));
   const paceClassName =
     delta === null || Math.abs(delta) < 0.5
       ? "text-foreground-muted"
@@ -104,6 +114,7 @@ function QuotaFooter({
       : delta > 0
         ? "bg-warning"
         : "bg-adaptive-emerald-600-400";
+  const windowLabel = shortWindowLabel(window, m);
 
   return (
     <View className="gap-1.5">
@@ -111,8 +122,9 @@ function QuotaFooter({
         <View className="flex-row items-center gap-1.5">
           <SymbolView name="clock" size={11} tintColorClassName="accent-foreground-muted" />
           <Text className="text-3xs tabular-nums text-foreground-muted">
-            {shortWindowLabel(window)}{" "}
-            {countdown === "Awaiting reset" ? "awaiting reset" : `resets in ${countdown}`}
+            {countdown === "Awaiting reset"
+              ? m(msg("{window} awaiting reset", { window: windowLabel }))
+              : m(msg("{window} resets in {countdown}", { window: windowLabel, countdown }))}
           </Text>
         </View>
       ) : null}
@@ -128,8 +140,8 @@ function QuotaFooter({
           )}
           <Text className="text-3xs tabular-nums text-foreground-muted">
             {pace.dailyPercent === null
-              ? `${pace.remainingPercent.toFixed(1)}% left`
-              : `${pace.dailyPercent.toFixed(1)}% / day left`}
+              ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
+              : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
           </Text>
         </View>
       ) : null}
@@ -150,13 +162,14 @@ function QuotaWindowRow({
   readonly now: number;
   readonly colors: Readonly<Record<UsageProviderKind, string>>;
 }) {
+  const m = useMessages();
   const isAntigravity = account.driver === "antigravity";
   const percent = window.usedPercent;
   const left = !isAntigravity && window === primary ? null : quotaCountdown(window.resetsAt, now);
   const label =
     isAntigravity && window.kind === "other"
       ? window.label.split(" · ").slice(1).join(" · ") || window.label
-      : shortWindowLabel(window);
+      : shortWindowLabel(window, m);
   const color = windowColor(account, colors);
   return (
     <View className="gap-1.5">
@@ -165,12 +178,14 @@ function QuotaWindowRow({
         <View className="flex-row items-baseline gap-2">
           {left === null ? null : (
             <Text className="text-3xs text-foreground-tertiary">
-              {left === "Awaiting reset" ? left : `${left} left`}
+              {left === "Awaiting reset"
+                ? m(msg("Awaiting reset"))
+                : m(msg("{time} left", { time: left }))}
             </Text>
           )}
           <Text className="text-2xs font-t3-medium tabular-nums text-foreground">
             {Math.round(percent)}%
-            <Text className="font-normal text-foreground-muted">{" used"}</Text>
+            <Text className="font-normal text-foreground-muted">{m(msg("used"))}</Text>
           </Text>
         </View>
       </View>
@@ -199,25 +214,30 @@ function AccountQuotaCard({
   readonly now: number;
   readonly colors: Readonly<Record<UsageProviderKind, string>>;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const model = quotaCardModel(account.driver, account.limits.windows);
   if (model === null || model.groups.length === 0) return null;
   const { primary, isAntigravity, isOpenCodeGo, groups } = model;
   const redeem = account.redeem;
   const resetCredits = account.limits.resetCredits;
-  const name = accountName(account, isOpenCodeGo);
+  const name = accountName(account, isOpenCodeGo, m);
   const period =
     primary.kind === "monthly"
-      ? "Monthly quota"
+      ? m(msg("Monthly quota"))
       : primary.kind === "weekly"
-        ? "Weekly quota"
+        ? m(msg("Weekly quota"))
         : primary.kind === "session"
-          ? "Session quota"
+          ? m(msg("Session quota"))
           : primary.label;
   const pricing = isOpenCodeGo ? deepSeekPricingPeriod(now) : null;
 
   return (
     <View
-      accessibilityLabel={`${name} ${isAntigravity ? "usage limits" : period.toLowerCase()}`}
+      accessibilityLabel={gt("{name} {scope}", {
+        name,
+        scope: isAntigravity ? gt("usage limits") : period.toLowerCase(),
+      })}
       className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4"
     >
       <View className="flex-row items-start justify-between gap-3">
@@ -242,12 +262,12 @@ function AccountQuotaCard({
                     : "text-3xs text-foreground-muted"
                 }
               >
-                DeepSeek ·{" "}
+                <T>DeepSeek ·</T>{" "}
                 {pricing === "peak"
-                  ? "Peak"
+                  ? gt("Peak")
                   : pricing === "off-peak"
-                    ? "Off-peak"
-                    : "Check pricing"}
+                    ? gt("Off-peak")
+                    : gt("Check pricing")}
               </Text>
             ) : null}
             {showIdentity ? <AccountIdentity account={account} /> : null}
@@ -255,7 +275,9 @@ function AccountQuotaCard({
         </View>
         {isAntigravity ? (
           <View className="shrink-0 rounded-md bg-subtle px-2 py-1">
-            <Text className="text-3xs text-foreground-muted">Model quotas</Text>
+            <Text className="text-3xs text-foreground-muted">
+              <T>Model quotas</T>
+            </Text>
           </View>
         ) : (
           <QuotaSummary window={primary} />

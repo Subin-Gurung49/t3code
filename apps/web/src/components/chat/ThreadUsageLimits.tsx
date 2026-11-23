@@ -17,9 +17,11 @@ import {
   quotaCountdown,
   quotaPace,
 } from "@t3tools/shared/usageQuotaCards";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { Clock3Icon, GaugeIcon } from "lucide-react";
 import { useState } from "react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
@@ -35,17 +37,19 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor } from "../usage/UsageLimits";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
-function shortWindowLabel(window: ServerProviderUsageWindow) {
+function shortWindowLabel(window: ServerProviderUsageWindow, resolve: MessageResolver = m) {
   if (window.kind === "session") {
     const minutes = window.windowDurationMins;
-    return minutes && minutes % 60 === 0 ? `${minutes / 60}h` : "Session";
+    return minutes && minutes % 60 === 0 ? `${minutes / 60}h` : resolve(msg("Session"));
   }
-  if (window.kind === "weekly") return "Weekly";
-  if (window.kind === "monthly") return "Monthly";
+  if (window.kind === "weekly") return resolve(msg("Weekly"));
+  if (window.kind === "monthly") return resolve(msg("Monthly"));
   return window.label;
 }
 
 function QuotaSummary({ window }: { readonly window: ServerProviderUsageWindow }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <div className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
       <span className="text-2xl font-medium leading-7 tracking-tight">
@@ -53,13 +57,14 @@ function QuotaSummary({ window }: { readonly window: ServerProviderUsageWindow }
         <span className="ml-0.5 text-sm text-muted-foreground">%</span>
       </span>
       <span className="text-3xs leading-3 text-muted-foreground">
-        {shortWindowLabel(window)} used
+        {gt("{window} used", { window: shortWindowLabel(window, m) })}
       </span>
     </div>
   );
 }
 
 function DeepSeekPricingStatus({ now }: { readonly now: number }) {
+  const gt = useGT();
   const period = deepSeekPricingPeriod(now);
   const color =
     period === "peak"
@@ -77,15 +82,23 @@ function DeepSeekPricingStatus({ now }: { readonly now: number }) {
           />
         }
       >
-        DeepSeek ·{" "}
+        <T>DeepSeek ·</T>{" "}
         <span className={color}>
-          {period === "peak" ? "Peak" : period === "off-peak" ? "Off-peak" : "Check pricing"}
+          {period === "peak"
+            ? gt("Peak")
+            : period === "off-peak"
+              ? gt("Off-peak")
+              : gt("Check pricing")}
         </span>
       </TooltipTrigger>
       <TooltipPopup side="left">
         {period === null
-          ? "Confirm current pricing: the Chinese public holiday calendar for this year is not available."
-          : "Peak: Mon–Fri, 01:00–04:00 and 06:00–10:00 UTC. Other hours, weekends and Chinese public holidays are off-peak."}
+          ? gt(
+              "Confirm current pricing: the Chinese public holiday calendar for this year is not available.",
+            )
+          : gt(
+              "Peak: Mon–Fri, 01:00–04:00 and 06:00–10:00 UTC. Other hours, weekends and Chinese public holidays are off-peak.",
+            )}
       </TooltipPopup>
     </Tooltip>
   );
@@ -98,6 +111,7 @@ function QuotaFooter({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const countdown = quotaCountdown(window.resetsAt, now);
   const pace = quotaPace(window, now);
@@ -106,14 +120,17 @@ function QuotaFooter({
     delta === null
       ? null
       : Math.abs(delta) < 0.5
-        ? "On pace"
-        : `${delta > 0 ? "Over" : "Under"} pace by ${Math.abs(delta).toFixed(1)}%`;
+        ? m(msg("On pace"))
+        : delta > 0
+          ? m(msg("Over pace by {percent}%", { percent: Math.abs(delta).toFixed(1) }))
+          : m(msg("Under pace by {percent}%", { percent: Math.abs(delta).toFixed(1) }));
   const paceColor =
     delta === null || Math.abs(delta) < 0.5
       ? "text-muted-foreground"
       : delta > 0
         ? "text-warning-foreground"
         : "text-success-foreground";
+  const windowLabel = shortWindowLabel(window, m);
 
   return (
     <>
@@ -129,13 +146,18 @@ function QuotaFooter({
           >
             <Clock3Icon className="size-3 shrink-0" aria-hidden />
             <span className="tabular-nums">
-              {shortWindowLabel(window)}{" "}
-              {countdown === "Awaiting reset" ? "awaiting reset" : `resets in ${countdown}`}
+              {countdown === "Awaiting reset"
+                ? m(msg("{window} awaiting reset", { window: windowLabel }))
+                : m(msg("{window} resets in {countdown}", { window: windowLabel, countdown }))}
             </span>
           </TooltipTrigger>
           <TooltipPopup side="left">
-            {shortWindowLabel(window)} resets{" "}
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+            {m(
+              msg("{window} resets {time}", {
+                window: windowLabel,
+                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+              }),
+            )}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -155,15 +177,17 @@ function QuotaFooter({
                 {paceLabel}
               </TooltipTrigger>
               <TooltipPopup side="left">
-                Pace compares quota used with the elapsed share of the billing period. The
-                difference is shown in percentage points.
+                <T>
+                  Pace compares quota used with the elapsed share of the billing period. The
+                  difference is shown in percentage points.
+                </T>
               </TooltipPopup>
             </Tooltip>
           ) : null}
           <span className="text-muted-foreground">
             {pace.dailyPercent === null
-              ? `${pace.remainingPercent.toFixed(1)}% left`
-              : `${pace.dailyPercent.toFixed(1)}% / day left`}
+              ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
+              : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
           </span>
         </div>
       ) : null}
@@ -180,6 +204,8 @@ function AccountQuotaCard({
   readonly showIdentity: boolean;
   readonly now: number;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const model = quotaCardModel(account.driver, account.limits.windows);
   if (model === null) return null;
   const { primary, isAntigravity, isOpenCodeGo } = model;
@@ -192,17 +218,20 @@ function AccountQuotaCard({
         : (providerClients.get(account.driver)?.label ?? account.driver);
   const period =
     primary.kind === "monthly"
-      ? "Monthly quota"
+      ? m(msg("Monthly quota"))
       : primary.kind === "weekly"
-        ? "Weekly quota"
+        ? m(msg("Weekly quota"))
         : primary.kind === "session"
-          ? "Session quota"
+          ? m(msg("Session quota"))
           : primary.label;
   const color = account.accentColor ?? barColor(account.driver);
 
   return (
     <section
-      aria-label={`${name} ${isAntigravity ? "usage limits" : period.toLowerCase()}`}
+      aria-label={gt("{name} {scope}", {
+        name,
+        scope: isAntigravity ? gt("usage limits") : period.toLowerCase(),
+      })}
       className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-3.5"
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -235,9 +264,9 @@ function AccountQuotaCard({
             {showIdentity && account.email ? (
               <RedactedSensitiveText
                 value={account.email}
-                ariaLabel="Toggle account email visibility"
-                revealTooltip="Click to reveal account"
-                hideTooltip="Click to hide account"
+                ariaLabel={gt("Toggle account email visibility")}
+                revealTooltip={gt("Click to reveal account")}
+                hideTooltip={gt("Click to hide account")}
                 className="w-fit max-w-full truncate text-3xs text-muted-foreground"
               />
             ) : showIdentity && account.displayName ? (
@@ -247,7 +276,7 @@ function AccountQuotaCard({
         </div>
         {isAntigravity ? (
           <span className="shrink-0 rounded-md bg-foreground/5 px-2 py-1 text-3xs leading-4 text-muted-foreground">
-            Model quotas
+            <T>Model quotas</T>
           </span>
         ) : (
           <QuotaSummary window={primary} />
@@ -278,9 +307,9 @@ function AccountQuotaCard({
                 const label =
                   isAntigravity && window.kind === "other"
                     ? window.label.split(" · ").slice(1).join(" · ") || window.label
-                    : shortWindowLabel(window);
+                    : shortWindowLabel(window, m);
                 const percent = window.usedPercent;
-                const valueLabel = "used";
+                const valueLabel = m(msg("used"));
                 return (
                   <div key={window.id} className="flex min-w-0 flex-col gap-1.5">
                     <div className="flex min-w-0 items-baseline justify-between gap-2 text-2xs leading-4 tabular-nums">
@@ -288,7 +317,9 @@ function AccountQuotaCard({
                       <div className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 gap-y-0.5">
                         {left === null ? null : (
                           <span className="text-3xs text-muted-foreground">
-                            {left === "Awaiting reset" ? left : `${left} left`}
+                            {left === "Awaiting reset"
+                              ? m(msg("Awaiting reset"))
+                              : m(msg("{time} left", { time: left }))}
                           </span>
                         )}
                         <span className="font-medium text-secondary-label">
@@ -301,7 +332,11 @@ function AccountQuotaCard({
                     </div>
                     <div
                       role="progressbar"
-                      aria-label={`${name} ${window.label} ${valueLabel}`}
+                      aria-label={gt("{name} {window} {value}", {
+                        name,
+                        window: label,
+                        value: valueLabel,
+                      })}
                       aria-valuenow={percent}
                       aria-valuemin={0}
                       aria-valuemax={100}
@@ -330,6 +365,8 @@ function AccountQuotaCard({
 }
 
 export function ThreadUsageLimits({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const gt = useGT();
+  const m = useMessages();
   const allPresentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -343,7 +380,7 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
 
   const presentations = new Map([[environmentId, presentation]]);
   const accounts = collectLimitAccounts(presentations);
-  const notices = collectLimitNotices(presentations);
+  const notices = collectLimitNotices(presentations, m);
   const refreshDisabled =
     isRefreshing || !canRefresh || presentation.connection.phase !== "connected";
 
@@ -358,14 +395,14 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Could not refresh usage limits",
+          title: m(msg("Could not refresh usage limits")),
           description: error instanceof Error ? error.message : String(error),
         });
       }
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not refresh usage limits",
+        title: m(msg("Could not refresh usage limits")),
         description: error instanceof Error ? error.message : String(error),
       });
     }
@@ -374,14 +411,14 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
 
   return (
     <section
-      aria-label="Usage limits"
+      aria-label={gt("Usage limits")}
       data-thread-usage-limits
       className="flex min-w-0 flex-col gap-2"
     >
       <div className="flex items-center justify-between gap-2 px-1.5">
         <h3 className="flex items-center gap-1.5 text-2xs font-medium text-secondary-label">
           <GaugeIcon className="size-3.5" aria-hidden />
-          Usage limits
+          <T>Usage limits</T>
         </h3>
         <div className="flex items-center gap-1">
           <Tooltip>
@@ -390,7 +427,7 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
                 <Button
                   variant="ghost-muted"
                   size="icon-xs"
-                  aria-label="Refresh usage limits"
+                  aria-label={gt("Refresh usage limits")}
                   aria-busy={isRefreshing}
                   disabled={refreshDisabled}
                   onClick={() => void refresh()}
@@ -400,11 +437,11 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
               }
             />
             <TooltipPopup side="top">
-              {isRefreshing ? "Refreshing usage limits…" : "Refresh usage limits"}
+              {isRefreshing ? gt("Refreshing usage limits…") : gt("Refresh usage limits")}
             </TooltipPopup>
           </Tooltip>
           <Button variant="ghost-muted" size="xs" render={<Link to="/usage" />}>
-            Details
+            <T>Details</T>
           </Button>
         </div>
       </div>
@@ -420,7 +457,7 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
       ))}
       {accounts.length === 0 && notices.length === 0 ? (
         <p className="dropdown-glass rounded-xl p-3.5 text-2xs leading-relaxed text-muted-foreground">
-          No subscription limits reported by connected providers.
+          <T>No subscription limits reported by connected providers.</T>
         </p>
       ) : null}
       {notices.map((notice) => (

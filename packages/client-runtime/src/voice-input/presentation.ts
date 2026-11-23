@@ -1,4 +1,5 @@
 import type { VoiceInputState } from "./controller.ts";
+import { mFallback, msg } from "gt-i18n";
 
 export type VoiceComposerPresentation = {
   readonly leadingAction: "cancel" | null;
@@ -38,7 +39,7 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: "Preparing",
+        statusLabel: mFallback(msg("Preparing")),
         confirmationEnabled: false,
       };
     case "recording": {
@@ -48,7 +49,11 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+        statusLabel: mFallback(
+          msg("Recording {time}", {
+            time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+          }),
+        ),
         confirmationEnabled: true,
       };
     }
@@ -59,7 +64,7 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: "Transcribing",
+        statusLabel: mFallback(msg("Transcribing")),
         confirmationEnabled: false,
       };
   }

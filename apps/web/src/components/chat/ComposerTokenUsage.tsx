@@ -1,9 +1,11 @@
 import type { OrchestrationV2ProviderTurn } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -66,7 +68,10 @@ function latestMainAgentTurn(
   return latest;
 }
 
-function usageCounts(turn: OrchestrationV2ProviderTurn): UsageCounts | null {
+function usageCounts(
+  turn: OrchestrationV2ProviderTurn,
+  resolve: MessageResolver = m,
+): UsageCounts | null {
   const report = turn.turnTokenUsage;
   if (report && (report.usageStatus !== "unavailable" || turn.tokenUsage === undefined)) {
     return {
@@ -77,10 +82,10 @@ function usageCounts(turn: OrchestrationV2ProviderTurn): UsageCounts | null {
       reasoningTokens: report.reasoningTokens ?? null,
       label:
         report.usageStatus === "complete"
-          ? "Reported"
+          ? resolve(msg("Reported"))
           : report.usageStatus === "partial"
-            ? "Partial"
-            : "Unavailable",
+            ? resolve(msg("Partial"))
+            : resolve(msg("Unavailable")),
     };
   }
   if (turn.tokenUsage) {
@@ -90,7 +95,7 @@ function usageCounts(turn: OrchestrationV2ProviderTurn): UsageCounts | null {
       cacheCreationTokens: null,
       outputTokens: turn.tokenUsage.outputTokens ?? null,
       reasoningTokens: turn.tokenUsage.reasoningOutputTokens ?? null,
-      label: turn.status === "running" ? "Live" : "Provider snapshot",
+      label: turn.status === "running" ? resolve(msg("Live")) : resolve(msg("Provider snapshot")),
     };
   }
   return report
@@ -100,7 +105,7 @@ function usageCounts(turn: OrchestrationV2ProviderTurn): UsageCounts | null {
         cacheCreationTokens: report.cacheCreationTokens ?? null,
         outputTokens: report.outputTokens ?? null,
         reasoningTokens: report.reasoningTokens ?? null,
-        label: "Unavailable",
+        label: resolve(msg("Unavailable")),
       }
     : null;
 }
@@ -136,27 +141,33 @@ function UsageLine({
   readonly outputRate?: number | null;
   readonly durationMs?: number | null;
 }) {
+  const m = useMessages();
   const metrics = [
-    { label: "Input", value: formatTokens(usage.inputTokens) },
-    { label: "Cached input", value: formatTokens(usage.cachedInputTokens) },
-    { label: "Output", value: formatTokens(usage.outputTokens) },
+    { label: m(msg("Input")), value: formatTokens(usage.inputTokens) },
+    { label: m(msg("Cached input")), value: formatTokens(usage.cachedInputTokens) },
+    { label: m(msg("Output")), value: formatTokens(usage.outputTokens) },
     ...(usage.reasoningTokens === null
       ? []
-      : [{ label: "Reasoning", value: formatTokens(usage.reasoningTokens) }]),
+      : [{ label: m(msg("Reasoning")), value: formatTokens(usage.reasoningTokens) }]),
     ...(usage.cacheCreationTokens === null
       ? []
-      : [{ label: "Cache write", value: formatTokens(usage.cacheCreationTokens) }]),
+      : [{ label: m(msg("Cache write")), value: formatTokens(usage.cacheCreationTokens) }]),
     ...(outputRate === undefined
       ? []
       : [
           {
-            label: "Avg. output",
+            label: m(msg("Avg. output")),
             value: outputRate === null ? "N/A" : `${outputRate.toFixed(1)} tok/s`,
           },
         ]),
     ...(durationMs === undefined
       ? []
-      : [{ label: "Elapsed", value: durationMs === null ? "N/A" : formatDuration(durationMs) }]),
+      : [
+          {
+            label: m(msg("Elapsed")),
+            value: durationMs === null ? "N/A" : formatDuration(durationMs),
+          },
+        ]),
   ];
 
   return (
@@ -212,9 +223,11 @@ export function ComposerTokenUsage({
   readonly contextWindow: ContextWindowSnapshot | null;
   readonly cost: ContextWindowSnapshot["cost"];
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const mainAgentTurns = providerTurns.filter((turn) => turn.runAttemptId !== null);
   const latestTurn = latestMainAgentTurn(mainAgentTurns);
-  const latestUsage = latestTurn === null ? null : usageCounts(latestTurn);
+  const latestUsage = latestTurn === null ? null : usageCounts(latestTurn, m);
   const latestTurnStartedAt = latestTurn === null ? null : timestampMs(latestTurn.startedAt);
   const latestTurnIsRunning = latestTurn?.status === "running";
   const [now, setNow] = useState(() => Date.now());
@@ -250,7 +263,7 @@ export function ComposerTokenUsage({
     cacheCreationTokens: totalFor(mainAgentTurns, "cacheCreationTokens"),
     outputTokens: totalFor(mainAgentTurns, "outputTokens"),
     reasoningTokens: totalFor(mainAgentTurns, "reasoningTokens"),
-    label: "Reported",
+    label: m(msg("Reported")),
   };
 
   if (latestTurn === null && reportedResponses === 0) return null;
@@ -275,7 +288,69 @@ export function ComposerTokenUsage({
   const compact = (value: number | null) =>
     value === null ? "N/A" : compactTokenFormatter.format(value).toLowerCase();
   const contextPercent = contextWindow?.usedPercentage ?? null;
-  const totalsLabel = reportedResponses > 0 ? "Thread" : "Response";
+  const totalsLabel = reportedResponses > 0 ? m(msg("Thread")) : m(msg("Response"));
+  const contextDescription =
+    contextWindow === null
+      ? null
+      : contextWindow.maxTokens === null
+        ? contextWindow.remainingTokens === null
+          ? gt("Context window: {used} tokens in use.", {
+              used: formatTokens(contextWindow.usedTokens),
+            })
+          : gt("Context window: {used} tokens in use. {remaining} tokens remaining.", {
+              used: formatTokens(contextWindow.usedTokens),
+              remaining: formatTokens(contextWindow.remainingTokens),
+            })
+        : contextWindow.remainingTokens === null
+          ? gt("Context window: {used} of {max} tokens in use.", {
+              used: formatTokens(contextWindow.usedTokens),
+              max: formatTokens(contextWindow.maxTokens),
+            })
+          : gt("Context window: {used} of {max} tokens in use. {remaining} tokens remaining.", {
+              used: formatTokens(contextWindow.usedTokens),
+              max: formatTokens(contextWindow.maxTokens),
+              remaining: formatTokens(contextWindow.remainingTokens),
+            });
+  const totalsDescription =
+    reportedResponses > 0
+      ? gt(
+          "{label} tokens: {input} input and {output} output. Totals cover {count} reported main-agent {response}.",
+          {
+            label: totalsLabel,
+            input: formatTokens(totals?.inputTokens ?? null),
+            output: formatTokens(totals?.outputTokens ?? null),
+            count: reportedResponses,
+            response: reportedResponses === 1 ? m(msg("response")) : m(msg("responses")),
+          },
+        )
+      : gt(
+          "{label} tokens: {input} input and {output} output. Counts from the latest provider snapshot.",
+          {
+            label: totalsLabel,
+            input: formatTokens(totals?.inputTokens ?? null),
+            output: formatTokens(totals?.outputTokens ?? null),
+          },
+        );
+  const contextSummary =
+    contextWindow === null
+      ? null
+      : contextWindow.maxTokens === null
+        ? contextWindow.remainingTokens === null
+          ? gt("{used} tokens used", { used: formatTokens(contextWindow.usedTokens) })
+          : gt("{used} tokens used · {remaining} remaining", {
+              used: formatTokens(contextWindow.usedTokens),
+              remaining: compact(contextWindow.remainingTokens),
+            })
+        : contextWindow.remainingTokens === null
+          ? gt("{used} / {max} tokens", {
+              used: formatTokens(contextWindow.usedTokens),
+              max: formatTokens(contextWindow.maxTokens),
+            })
+          : gt("{used} / {max} tokens · {remaining} remaining", {
+              used: formatTokens(contextWindow.usedTokens),
+              max: formatTokens(contextWindow.maxTokens),
+              remaining: compact(contextWindow.remainingTokens),
+            });
   const costLabel =
     cost == null
       ? null
@@ -288,7 +363,7 @@ export function ComposerTokenUsage({
       className="@container/composer-usage relative mx-auto min-w-0 max-w-(--chat-content-max-width) rounded-xl bg-background px-3 pt-2 sm:px-4"
       data-chat-composer-token-usage="true"
       role="region"
-      aria-label="Generation telemetry"
+      aria-label={gt("Generation telemetry")}
     >
       <Collapsible>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-2xs leading-4 text-muted-foreground tabular-nums">
@@ -296,18 +371,12 @@ export function ComposerTokenUsage({
             <TelemetryMetric
               description={
                 <>
-                  Context window: {formatTokens(contextWindow.usedTokens)}
-                  {contextWindow.maxTokens == null
-                    ? " tokens in use."
-                    : ` of ${formatTokens(contextWindow.maxTokens)} tokens in use.`}
-                  {contextWindow.remainingTokens === null
-                    ? null
-                    : ` ${formatTokens(contextWindow.remainingTokens)} tokens remaining.`}{" "}
-                  This is the current context, separate from thread-wide token totals.
+                  {contextDescription}
+                  <T>This is the current context, separate from thread-wide token totals.</T>
                 </>
               }
             >
-              <span>Context</span>
+              <T>Context</T>
               {contextPercent === null ? null : (
                 <span
                   aria-hidden
@@ -332,50 +401,51 @@ export function ComposerTokenUsage({
               </span>
             </TelemetryMetric>
           ) : null}
-          <TelemetryMetric
-            description={
-              <>
-                {totalsLabel} tokens: {formatTokens(totals?.inputTokens ?? null)} input and{" "}
-                {formatTokens(totals?.outputTokens ?? null)} output.
-                {reportedResponses > 0
-                  ? ` Totals cover ${reportedResponses} reported main-agent ${reportedResponses === 1 ? "response" : "responses"}.`
-                  : " Counts from the latest provider snapshot."}
-              </>
-            }
-          >
+          <TelemetryMetric description={totalsDescription}>
             <span>{totalsLabel}</span>
             <span className="font-medium text-secondary-label">
               {compact(totals?.inputTokens ?? null)}{" "}
-              <span className="font-normal text-muted-foreground">in</span>
+              <span className="font-normal text-muted-foreground">
+                <T>in</T>
+              </span>
             </span>
             <span aria-hidden className="text-muted-foreground/50">
               /
             </span>
             <span className="font-medium text-secondary-label">
               {compact(totals?.outputTokens ?? null)}{" "}
-              <span className="font-normal text-muted-foreground">out</span>
+              <span className="font-normal text-muted-foreground">
+                <T>out</T>
+              </span>
             </span>
           </TelemetryMetric>
           {cacheHit === null ? null : (
             <TelemetryMetric
-              description={`${formatTokens(totals?.cachedInputTokens ?? null)} input tokens read from cache. Cache hit is the share of reported input reused from cache.`}
+              description={gt(
+                "{count} input tokens read from cache. Cache hit is the share of reported input reused from cache.",
+                { count: formatTokens(totals?.cachedInputTokens ?? null) },
+              )}
             >
-              <span>Cached</span>
+              <T>Cached</T>
               <span className="font-medium text-secondary-label">{Math.round(cacheHit)}%</span>
             </TelemetryMetric>
           )}
           {outputRate === null ? null : (
-            <TelemetryMetric description="Average output tokens per second over the latest turn. Elapsed time includes tool calls and pauses.">
+            <TelemetryMetric
+              description={gt(
+                "Average output tokens per second over the latest turn. Elapsed time includes tool calls and pauses.",
+              )}
+            >
               <GaugeIcon className="size-3" aria-hidden />
-              <span>Avg. output</span>
+              <T>Avg. output</T>
               <span className="font-medium text-secondary-label">
                 {outputRate.toFixed(1)} tok/s
               </span>
             </TelemetryMetric>
           )}
           {costLabel === null ? null : (
-            <TelemetryMetric description="Cost reported by the provider.">
-              <span>Cost</span>
+            <TelemetryMetric description={gt("Cost reported by the provider.")}>
+              <T>Cost</T>
               <span className="font-medium text-secondary-label">{costLabel}</span>
             </TelemetryMetric>
           )}
@@ -383,7 +453,7 @@ export function ComposerTokenUsage({
             render={<Button variant="ghost-muted" size="micro" />}
             className="group ml-auto"
           >
-            Details
+            <T>Details</T>
             <ChevronDownIcon
               className="size-3 transition-transform group-data-panel-open:rotate-180 motion-reduce:transition-none"
               aria-hidden
@@ -394,41 +464,41 @@ export function ComposerTokenUsage({
           <div className="mt-2 flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl border border-border/60 bg-card p-3.5">
             {contextWindow !== null ? (
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border/50 pb-2.5 text-2xs leading-4">
-                <span className="font-medium text-secondary-label">Context window</span>
-                <span className="text-muted-foreground tabular-nums">
-                  {formatTokens(contextWindow.usedTokens)}
-                  {contextWindow.maxTokens == null
-                    ? " tokens used"
-                    : ` / ${formatTokens(contextWindow.maxTokens)} tokens`}
-                  {contextWindow.remainingTokens === null
-                    ? null
-                    : ` · ${compact(contextWindow.remainingTokens)} remaining`}
+                <span className="font-medium text-secondary-label">
+                  <T>Context window</T>
                 </span>
+                <span className="text-muted-foreground tabular-nums">{contextSummary}</span>
               </div>
             ) : null}
             <div className="grid min-w-0 grid-cols-1 gap-4 @lg/composer-usage:grid-cols-2">
               {latestTurn !== null && latestUsage !== null ? (
                 <UsageLine
-                  label={latestTurnIsRunning ? "Current response" : "Last response"}
+                  label={latestTurnIsRunning ? gt("Current response") : gt("Last response")}
                   usage={latestUsage}
                   outputRate={outputRate}
                   durationMs={durationMs}
                 />
               ) : (
                 <p className="text-2xs leading-4 text-muted-foreground">
-                  Token counts are not available for this response.
+                  <T>Token counts are not available for this response.</T>
                 </p>
               )}
               {reportedResponses > 0 ? (
                 <UsageLine
-                  label={`Thread total · ${reportedResponses} ${reportedResponses === 1 ? "response" : "responses"}`}
+                  label={gt("Thread total · {count} {response}", {
+                    count: reportedResponses,
+                    response: reportedResponses === 1 ? m(msg("response")) : m(msg("responses")),
+                  })}
                   usage={threadTotals}
                 />
               ) : null}
             </div>
             <p className="border-t border-border/50 pt-2.5 text-3xs leading-relaxed text-muted-foreground">
-              Input includes cache reads and writes. Output includes reasoning. Thread totals cover
-              reported main-agent responses only. Average output includes tool calls and pauses.
+              <T>
+                Input includes cache reads and writes. Output includes reasoning. Thread totals
+                cover reported main-agent responses only. Average output includes tool calls and
+                pauses.
+              </T>
             </p>
           </div>
         </CollapsiblePanel>

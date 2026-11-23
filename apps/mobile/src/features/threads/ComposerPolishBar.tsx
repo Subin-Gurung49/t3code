@@ -2,6 +2,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { T, useGT } from "gt-react-native";
 import type { UseMobileComposerPolishReturn } from "./useMobileComposerPolish";
 import { Pressable, ScrollView, View } from "react-native";
 
@@ -10,7 +11,8 @@ export function ComposerPolishButton(props: {
   readonly isBusy: boolean;
   readonly onPress: () => void;
 }) {
-  const accessibilityLabel = props.isBusy ? "Polishing prompt" : "Polish prompt";
+  const gt = useGT();
+  const accessibilityLabel = props.isBusy ? gt("Polishing prompt") : gt("Polish prompt");
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
@@ -38,16 +40,17 @@ export function ComposerPolishBar(props: {
   readonly polish: UseMobileComposerPolishReturn;
 }) {
   const { state, dismissError } = props.polish;
+  const gt = useGT();
   if (state.phase === "idle" && !state.restorableOriginal) return null;
 
   if (state.phase === "error") {
     return (
       <View className="mx-3 mb-2 flex-row items-center gap-2 rounded-xl border border-danger-border bg-danger/10 px-3 py-2">
         <Text accessibilityRole="alert" className="min-w-0 flex-1 text-xs text-danger-foreground">
-          {state.error ?? "Prompt polish failed."}
+          {state.error ?? gt("Prompt polish failed.")}
         </Text>
         <Pressable
-          accessibilityLabel="Dismiss"
+          accessibilityLabel={gt("Dismiss")}
           accessibilityRole="button"
           className="size-8 items-center justify-center active:opacity-70"
           hitSlop={8}
@@ -69,9 +72,9 @@ export function ComposerPolishBar(props: {
       <View className="mx-3 mb-2 flex-row items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
         <AppActivityIndicator size="small" colorClassName="accent-primary" />
         <Text accessibilityLiveRegion="polite" className="min-w-0 flex-1 text-xs text-foreground">
-          Polishing draft…
+          <T>Polishing draft…</T>
         </Text>
-        <Button label="Cancel" size="compact" tone="text" onPress={props.onCancel} />
+        <Button label={gt("Cancel")} size="compact" tone="text" onPress={props.onCancel} />
       </View>
     );
   }
@@ -87,11 +90,11 @@ export function ComposerPolishBar(props: {
             type="monochrome"
           />
           <Text className="min-w-0 flex-1 text-xs font-t3-medium text-primary">
-            Prompt polish preview
+            <T>Prompt polish preview</T>
           </Text>
-          <Button label="Cancel" size="compact" tone="text" onPress={props.onCancel} />
+          <Button label={gt("Cancel")} size="compact" tone="text" onPress={props.onCancel} />
           <Button
-            label="Apply"
+            label={gt("Apply")}
             size="compact"
             tone="primary"
             disabled={props.disabled}
@@ -114,10 +117,10 @@ export function ComposerPolishBar(props: {
     return (
       <View className="mx-3 mb-2 flex-row items-center gap-2 rounded-xl border border-border/40 bg-subtle/40 px-3 py-2">
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-          Prompt polished. Original draft preserved.
+          <T>Prompt polished. Original draft preserved.</T>
         </Text>
         <Button
-          label="Restore original"
+          label={gt("Restore original")}
           icon="arrow.uturn.backward"
           size="compact"
           tone="text"
