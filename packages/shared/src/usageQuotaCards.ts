@@ -18,6 +18,9 @@ const DEEPSEEK_HOLIDAYS: Readonly<Record<number, readonly (readonly [string, str
 const ANTIGRAVITY_GROUP_ORDER = new Map([
   ["Gemini 4 Argon", 0],
   ["Gemini", 1],
+  ["Claude & GPT (shared)", 2],
+  ["Claude", 3],
+  ["GPT", 4],
 ]);
 
 export function deepSeekPricingPeriod(now: number) {
@@ -39,13 +42,6 @@ export function deepSeekPricingPeriod(now: number) {
 export function antigravityQuotaGroups(windows: readonly ServerProviderUsageWindow[]) {
   const groups = new Map<string, ServerProviderUsageWindow[]>();
   for (const window of windows) {
-    if (
-      window.id.startsWith("3p-") ||
-      window.id.startsWith("claude-") ||
-      window.id.startsWith("gpt-")
-    ) {
-      continue;
-    }
     const label = window.label.split(" · ")[0]?.trim() || window.label;
     const group = groups.get(label);
     if (group) group.push(window);

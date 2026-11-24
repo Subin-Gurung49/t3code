@@ -59,12 +59,19 @@ describe("DeepSeek pricing period", () => {
 });
 
 describe("quota summaries", () => {
-  it("keeps Gemini allowances separate and excludes unavailable Claude/GPT models", () => {
+  it("groups Gemini and Claude/GPT Antigravity allowances separately in display order", () => {
     const sharedWeekly: ServerProviderUsageWindow = {
       ...weekly,
       id: "3p-weekly",
       label: "Claude & GPT (shared) · Weekly",
       usedPercent: 60,
+    };
+    const sharedSession: ServerProviderUsageWindow = {
+      ...sharedWeekly,
+      id: "3p-5h",
+      label: "Claude & GPT (shared) · 5-hour",
+      kind: "session",
+      windowDurationMins: 300,
     };
     const geminiWeekly: ServerProviderUsageWindow = {
       ...weekly,
@@ -85,20 +92,36 @@ describe("quota summaries", () => {
       label: "Gemini 4 Argon · Weekly",
       usedPercent: 80,
     };
+    const claudeWeekly: ServerProviderUsageWindow = {
+      ...sharedWeekly,
+      id: "claude-weekly",
+      label: "Claude · Weekly",
+    };
+    const gptWeekly: ServerProviderUsageWindow = {
+      ...sharedWeekly,
+      id: "gpt-weekly",
+      label: "GPT · Weekly",
+    };
     expect(
       antigravityQuotaGroups([
         sharedWeekly,
+        sharedSession,
         geminiWeekly,
         geminiSession,
         argonWeekly,
-        { ...sharedWeekly, id: "claude-weekly", label: "Claude · Weekly" },
-        { ...sharedWeekly, id: "gpt-weekly", label: "GPT · Weekly" },
+        gptWeekly,
+        claudeWeekly,
       ]),
     ).toEqual([
       { label: "Gemini 4 Argon", windows: [argonWeekly] },
       { label: "Gemini", windows: [geminiSession, geminiWeekly] },
+      { label: "Claude & GPT (shared)", windows: [sharedSession, sharedWeekly] },
+      { label: "Claude", windows: [claudeWeekly] },
+      { label: "GPT", windows: [gptWeekly] },
     ]);
-    expect(antigravityQuotaGroups([sharedWeekly])).toEqual([]);
+    expect(antigravityQuotaGroups([sharedWeekly])).toEqual([
+      { label: "Claude & GPT (shared)", windows: [sharedWeekly] },
+    ]);
   });
 
   it("preserves Antigravity quotas whose reset cadence is not reported", () => {
