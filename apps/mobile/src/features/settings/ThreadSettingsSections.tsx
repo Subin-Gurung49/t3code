@@ -65,6 +65,14 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
+        <MachineBetaSection
+          title={gt("Suggest next prompt")}
+          icon="text.bubble"
+          setting="promptSuggestionsEnabled"
+          description={gt(
+            "Show a predicted next message above the composer after a Claude or Codex turn. Tap to use it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+          )}
+        />
         <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
@@ -264,7 +272,10 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting =
+  | "linkedEnvironmentsEnabled"
+  | "fastWorktreeCheckout"
+  | "promptSuggestionsEnabled";
 
 const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   readonly mode: AgentFeedbackMode;
@@ -358,7 +369,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly capability?: "peerLinks" | "fastWorktreeCheckout";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -367,7 +378,8 @@ function MachineBetaSection({
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities[capability] === true,
+      (capability === undefined ||
+        environment.serverConfig?.environment.capabilities[capability] === true),
   );
   const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -399,10 +411,7 @@ function MachineBetaSection({
                 void updateSettings({
                   environmentId: environment.environmentId,
                   input: {
-                    patch:
-                      setting === "linkedEnvironmentsEnabled"
-                        ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
+                    patch: { [setting]: value } as ServerSettingsPatch,
                   },
                 })
               }

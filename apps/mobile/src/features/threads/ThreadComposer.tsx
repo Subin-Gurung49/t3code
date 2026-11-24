@@ -134,6 +134,8 @@ import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPrese
 import { ComposerPolishBar, ComposerPolishButton } from "./ComposerPolishBar";
 import { useMobileComposerPolish } from "./useMobileComposerPolish";
 import { orchestrationEnvironment } from "../../state/orchestration";
+import { PromptSuggestionChip } from "./PromptSuggestionChip";
+import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
   useThreadSettingsSheetPresentation,
@@ -480,6 +482,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
   });
+  const promptSuggestion = usePromptSuggestion(
+    props.environmentId,
+    props.isDraft ? undefined : props.selectedThread.id,
+    props.selectedThread.latestRun,
+  );
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const polishActionGenerationRef = useRef(0);
@@ -925,6 +932,29 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               </Text>
             </View>
           ) : null}
+          {(() => {
+            const accepted = promptSuggestionToAccept(promptSuggestion.suggestion, draftMessage);
+            if (
+              accepted === null ||
+              hasContent ||
+              queuedEdit !== null ||
+              isSubmissionLocked ||
+              props.isDraft === true
+            ) {
+              return null;
+            }
+            return (
+              <PromptSuggestionChip
+                suggestion={accepted}
+                disabled={isSubmissionLocked}
+                onAccept={() => {
+                  props.onChangeDraftMessage(accepted);
+                  inputRef.current?.focus();
+                }}
+                onDismiss={promptSuggestion.dismiss}
+              />
+            );
+          })()}
           <View
             onLayout={(event) => {
               compactEditor.onRowLayout(event);
