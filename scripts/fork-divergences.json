@@ -65,6 +65,27 @@
       }
     },
     {
+      "id": "antigravity-usage-limits",
+      "why": "Upstream removed Antigravity quota reading (#43026); the fork keeps it so Antigravity quota cards keep working.",
+      "files": {
+        "apps/server/src/provider/Drivers/AntigravityDriver.ts": {
+          "require": ["makeAntigravityUsageProbe"]
+        },
+        "apps/server/src/provider/AntigravityProvider.ts": {
+          "require": ["probeUsage"]
+        },
+        "apps/server/src/usage/cliproxyApi.ts": {
+          "require": ["antigravitySummaryWindows"]
+        },
+        "apps/server/src/usage/UsageLimitSources.ts": {
+          "require": ["antigravityWindowLimitsModel"]
+        },
+        "packages/shared/src/usageLimits.ts": {
+          "require": ["antigravityWindowLimitsModel"]
+        }
+      }
+    },
+    {
       "id": "fork-composer-slot",
       "why": "Fork-only composer bars live behind one small slot instead of edits throughout the upstream composer.",
       "files": {
