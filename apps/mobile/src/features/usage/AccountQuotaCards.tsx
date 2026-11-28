@@ -1,10 +1,12 @@
 import type { ServerProviderUsageWindow, UsageProviderKind } from "@t3tools/contracts";
 import type { LimitAccount } from "@t3tools/shared/usageLimits";
 import {
+  currentUsedPercent,
   deepSeekPricingPeriod,
   quotaCardModel,
-  quotaCountdown,
   quotaPace,
+  quotaRows,
+  shortQuotaCountdown,
 } from "@t3tools/shared/usageQuotaCards";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
@@ -16,6 +18,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ResetCredits } from "./UsageLimitsSection";
 import { PROVIDER_LABEL, usageProviderKind, useProviderColors } from "./usageProviders";
+
+const WARNING_COLOR = "#f59e0b";
 
 function shortWindowLabel(window: ServerProviderUsageWindow, resolve: MessageResolver = m) {
   if (window.kind === "session") {
@@ -67,23 +71,68 @@ function windowColor(
   return kind ? colors[kind] : colors.codex;
 }
 
-function QuotaSummary({ window }: { readonly window: ServerProviderUsageWindow }) {
-  const gt = useGT();
+function QuotaRow({
+  window,
+  label,
+  color,
+  warnAt,
+  showPace,
+  now,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly label: string;
+  readonly color: string;
+  readonly warnAt: number;
+  readonly showPace: boolean;
+  readonly now: number;
+}) {
   const m = useMessages();
+  const percent = currentUsedPercent(window, now);
+  const warn = percent >= warnAt;
+  const delta = showPace ? (quotaPace(window, now)?.deltaPercent ?? null) : null;
+  const expected = delta === null ? null : Math.max(0, Math.min(100, percent - delta));
+  const countdown = shortQuotaCountdown(window.resetsAt, now);
   return (
-    <View className="shrink-0 items-end">
-      <Text className="text-2xl font-t3-medium tabular-nums text-foreground">
-        {Math.round(window.usedPercent)}
-        <Text className="text-sm text-foreground-muted">%</Text>
+    <View className="flex-row items-center gap-2">
+      <Text className="w-14 text-2xs text-foreground-muted">{label}</Text>
+      <View className="h-1.5 min-w-8 flex-1 justify-center">
+        <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
+          <View
+            className="h-full rounded-full"
+            style={{
+              flex: Math.min(100, percent),
+              backgroundColor: warn ? WARNING_COLOR : color,
+            }}
+          />
+          <View style={{ flex: 100 - Math.min(100, percent) }} />
+        </View>
+        {expected === null ? null : (
+          <View
+            className="absolute -top-0.5 -bottom-0.5 w-px bg-foreground-muted"
+            style={{ left: `${expected}%` }}
+          />
+        )}
+      </View>
+      <Text
+        className={`w-10 text-right text-2xs font-t3-medium tabular-nums ${warn ? "text-warning-foreground" : "text-foreground"}`}
+      >
+        {Math.round(percent)}%
       </Text>
-      <Text className="text-3xs text-foreground-muted">
-        {gt("{window} used", { window: shortWindowLabel(window, m) })}
-      </Text>
+      <View className="w-16 flex-row items-center gap-1">
+        {countdown === null ? null : (
+          <>
+            <SymbolView name="clock" size={9} tintColorClassName="accent-foreground-muted" />
+            <Text className="text-3xs tabular-nums text-foreground-muted">
+              {countdown === "Awaiting reset" ? m(msg("Awaiting reset")) : countdown}
+            </Text>
+          </>
+        )}
+      </View>
     </View>
   );
 }
 
-function QuotaFooter({
+function PaceLine({
   window,
   now,
 }: {
@@ -91,9 +140,9 @@ function QuotaFooter({
   readonly now: number;
 }) {
   const m = useMessages();
-  const countdown = quotaCountdown(window.resetsAt, now);
   const pace = quotaPace(window, now);
-  const delta = pace?.deltaPercent ?? null;
+  if (pace === null) return null;
+  const delta = pace.deltaPercent;
   const paceLabel =
     delta === null
       ? null
@@ -108,97 +157,29 @@ function QuotaFooter({
       : delta > 0
         ? "text-warning-foreground"
         : "text-adaptive-emerald-600-400";
+  const overPace = delta !== null && delta >= 0.5;
   const paceDotClassName =
     delta === null || Math.abs(delta) < 0.5
       ? "bg-foreground-muted"
-      : delta > 0
-        ? "bg-warning"
+      : overPace
+        ? ""
         : "bg-adaptive-emerald-600-400";
-  const windowLabel = shortWindowLabel(window, m);
-
   return (
-    <View className="gap-1.5">
-      {countdown !== null && window.resetsAt ? (
-        <View className="flex-row items-center gap-1.5">
-          <SymbolView name="clock" size={11} tintColorClassName="accent-foreground-muted" />
-          <Text className="text-3xs tabular-nums text-foreground-muted">
-            {countdown === "Awaiting reset"
-              ? m(msg("{window} awaiting reset", { window: windowLabel }))
-              : m(msg("{window} resets in {countdown}", { window: windowLabel, countdown }))}
-          </Text>
+    <View className="flex-row flex-wrap items-center justify-between gap-x-2">
+      {paceLabel ? (
+        <View className="flex-row items-center gap-1">
+          <View
+            className={`size-1.5 rounded-full ${paceDotClassName}`}
+            style={overPace ? { backgroundColor: WARNING_COLOR, borderRadius: 999 } : undefined}
+          />
+          <Text className={`text-3xs tabular-nums ${paceClassName}`}>{paceLabel}</Text>
         </View>
       ) : null}
-      {pace !== null ? (
-        <View className="flex-row flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border-subtle pt-1.5">
-          {paceLabel ? (
-            <View className="flex-row items-center gap-1.5">
-              <View className={`size-1.5 rounded-full ${paceDotClassName}`} />
-              <Text className={`text-3xs tabular-nums ${paceClassName}`}>{paceLabel}</Text>
-            </View>
-          ) : (
-            <View />
-          )}
-          <Text className="text-3xs tabular-nums text-foreground-muted">
-            {pace.dailyPercent === null
-              ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
-              : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
-          </Text>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function QuotaWindowRow({
-  account,
-  window,
-  primary,
-  now,
-  colors,
-}: {
-  readonly account: LimitAccount;
-  readonly window: ServerProviderUsageWindow;
-  readonly primary: ServerProviderUsageWindow;
-  readonly now: number;
-  readonly colors: Readonly<Record<UsageProviderKind, string>>;
-}) {
-  const m = useMessages();
-  const isAntigravity = account.driver === "antigravity";
-  const percent = window.usedPercent;
-  const left = !isAntigravity && window === primary ? null : quotaCountdown(window.resetsAt, now);
-  const label =
-    isAntigravity && window.kind === "other"
-      ? window.label.split(" · ").slice(1).join(" · ") || window.label
-      : shortWindowLabel(window, m);
-  const color = windowColor(account, colors);
-  return (
-    <View className="gap-1.5">
-      <View className="flex-row items-baseline justify-between gap-2">
-        <Text className="min-w-0 flex-1 text-2xs text-foreground-muted">{label}</Text>
-        <View className="flex-row items-baseline gap-2">
-          {left === null ? null : (
-            <Text className="text-3xs text-foreground-tertiary">
-              {left === "Awaiting reset"
-                ? m(msg("Awaiting reset"))
-                : m(msg("{time} left", { time: left }))}
-            </Text>
-          )}
-          <Text className="text-2xs font-t3-medium tabular-nums text-foreground">
-            {Math.round(percent)}%
-            <Text className="font-normal text-foreground-muted">{m(msg("used"))}</Text>
-          </Text>
-        </View>
-      </View>
-      <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
-        <View
-          className="h-full rounded-full"
-          style={{
-            flex: percent,
-            backgroundColor: isAntigravity && percent >= 75 ? "#f59e0b" : color,
-          }}
-        />
-        <View style={{ flex: 100 - percent }} />
-      </View>
+      <Text className="ml-auto text-3xs tabular-nums text-foreground-muted">
+        {pace.dailyPercent === null
+          ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
+          : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
+      </Text>
     </View>
   );
 }
@@ -231,6 +212,8 @@ function AccountQuotaCard({
           ? m(msg("Session quota"))
           : primary.label;
   const pricing = isOpenCodeGo ? deepSeekPricingPeriod(now) : null;
+  const color = windowColor(account, colors);
+  const warnAt = isAntigravity ? 75 : 90;
 
   return (
     <View
@@ -238,88 +221,60 @@ function AccountQuotaCard({
         name,
         scope: isAntigravity ? gt("usage limits") : period.toLowerCase(),
       })}
-      className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4"
+      className="gap-1.5 px-3.5 py-3"
     >
-      <View className="flex-row items-start justify-between gap-3">
-        <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
-          <View className="size-8 shrink-0 items-center justify-center rounded-lg bg-subtle">
-            <ProviderIcon provider={account.driver} size={16} />
-          </View>
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text className="text-sm font-t3-medium text-foreground" numberOfLines={1}>
-              {name}
-            </Text>
-            {account.plan ? (
-              <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
-                {account.plan}
-              </Text>
-            ) : null}
-            {pricing !== null ? (
-              <Text
-                className={
-                  pricing === "peak"
-                    ? "text-3xs text-warning-foreground"
-                    : "text-3xs text-foreground-muted"
+      <View className="flex-row flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <ProviderIcon provider={account.driver} size={14} />
+        <Text className="text-sm font-t3-medium text-foreground">{name}</Text>
+        {account.plan ? (
+          <Text className="text-3xs text-foreground-muted">{account.plan}</Text>
+        ) : null}
+        {pricing !== null ? (
+          <Text
+            className={
+              pricing === "peak"
+                ? "text-3xs text-warning-foreground"
+                : "text-3xs text-foreground-muted"
+            }
+          >
+            <T>DeepSeek ·</T>{" "}
+            {pricing === "peak"
+              ? gt("Peak")
+              : pricing === "off-peak"
+                ? gt("Off-peak")
+                : gt("Check pricing")}
+          </Text>
+        ) : null}
+        {showIdentity ? <AccountIdentity account={account} /> : null}
+      </View>
+      {groups.map((group, groupIndex) => {
+        const groupPrimary = isAntigravity ? group.primary : primary;
+        return (
+          <View key={group.label ?? "quota"} className={groupIndex === 0 ? "gap-1" : "gap-1 pt-1"}>
+            {group.label === null ? null : (
+              <Text className="text-3xs font-t3-medium text-foreground-muted">{group.label}</Text>
+            )}
+            {quotaRows(groupPrimary, group.windows).map((window) => (
+              <QuotaRow
+                key={window.id}
+                window={window}
+                label={
+                  isAntigravity && window.kind === "other"
+                    ? window.label.split(" · ").slice(1).join(" · ") || window.label
+                    : shortWindowLabel(window, m)
                 }
-              >
-                <T>DeepSeek ·</T>{" "}
-                {pricing === "peak"
-                  ? gt("Peak")
-                  : pricing === "off-peak"
-                    ? gt("Off-peak")
-                    : gt("Check pricing")}
-              </Text>
-            ) : null}
-            {showIdentity ? <AccountIdentity account={account} /> : null}
+                color={color}
+                warnAt={warnAt}
+                showPace={window === groupPrimary}
+                now={now}
+              />
+            ))}
+            {groupPrimary ? <PaceLine window={groupPrimary} now={now} /> : null}
           </View>
-        </View>
-        {isAntigravity ? (
-          <View className="shrink-0 rounded-md bg-subtle px-2 py-1">
-            <Text className="text-3xs text-foreground-muted">
-              <T>Model quotas</T>
-            </Text>
-          </View>
-        ) : (
-          <QuotaSummary window={primary} />
-        )}
-      </View>
-      <View className="gap-2.5">
-        {groups.map((group, groupIndex) => {
-          const groupPrimary = group.primary;
-          const windows = group.windows;
-          return (
-            <View
-              key={group.label ?? "quota"}
-              className={
-                groupIndex === 0 ? "gap-2.5" : "gap-2.5 border-t border-border-subtle pt-2.5"
-              }
-            >
-              {group.label === null ? null : (
-                <View className="flex-row items-start justify-between gap-3">
-                  <Text className="pt-1 text-2xs font-t3-medium text-foreground-muted">
-                    {group.label}
-                  </Text>
-                  {groupPrimary ? <QuotaSummary window={groupPrimary} /> : null}
-                </View>
-              )}
-              {windows.map((window) => (
-                <QuotaWindowRow
-                  key={window.id}
-                  account={account}
-                  window={window}
-                  primary={primary}
-                  now={now}
-                  colors={colors}
-                />
-              ))}
-              {groupPrimary ? <QuotaFooter window={groupPrimary} now={now} /> : null}
-            </View>
-          );
-        })}
-      </View>
-      {isAntigravity ? null : <QuotaFooter window={primary} now={now} />}
+        );
+      })}
       {redeem && resetCredits && resetCredits.availableCount > 0 ? (
-        <View className="border-t border-border-subtle pt-3">
+        <View className="border-t border-border-subtle pt-2">
           <ResetCredits
             environmentId={redeem.environmentId}
             input={redeem.input}
@@ -346,15 +301,16 @@ export function AccountQuotaCards({
     driverCounts.set(account.driver, (driverCounts.get(account.driver) ?? 0) + 1);
   }
   return (
-    <View className="w-full max-w-[720px] self-center gap-3">
-      {accounts.map((account) => (
-        <AccountQuotaCard
-          key={account.key}
-          account={account}
-          showIdentity={(driverCounts.get(account.driver) ?? 0) > 1}
-          now={now}
-          colors={colors}
-        />
+    <View className="w-full max-w-[720px] self-center overflow-hidden rounded-[20px] border-continuous bg-grouped-card">
+      {accounts.map((account, index) => (
+        <View key={account.key} className={index === 0 ? "" : "border-t border-border-subtle"}>
+          <AccountQuotaCard
+            account={account}
+            showIdentity={(driverCounts.get(account.driver) ?? 0) > 1}
+            now={now}
+            colors={colors}
+          />
+        </View>
       ))}
     </View>
   );

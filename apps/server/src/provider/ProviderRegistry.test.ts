@@ -517,6 +517,10 @@ const makeUpdateState = (status: ServerProviderUpdateState["status"]) =>
 // One Codex instance whose probe returns whatever `snapshot` currently holds.
 const buildRegistryOverSnapshot = Effect.fn("buildRegistryOverSnapshot")(function* (
   snapshot: Ref.Ref<ServerProvider>,
+  options?: {
+    readonly refreshUsageNow?: Effect.Effect<void>;
+    readonly onRefresh?: Effect.Effect<void>;
+  },
 ) {
   const driver = ProviderDriverKind.make("codex");
   const instance = {
@@ -531,7 +535,8 @@ const buildRegistryOverSnapshot = Effect.fn("buildRegistryOverSnapshot")(functio
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
         ),
       getSnapshot: Ref.get(snapshot),
-      refresh: Ref.get(snapshot),
+      refresh: Ref.get(snapshot).pipe(Effect.tap(() => options?.onRefresh ?? Effect.void)),
+      ...(options?.refreshUsageNow ? { refreshUsageNow: options.refreshUsageNow } : {}),
       streamChanges: Stream.empty,
       applyUsageLimits: () => Effect.void,
     },
@@ -4349,6 +4354,27 @@ it.layer(
           assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
             withBundledCompatibility(cachedProvider),
           ]);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("explicit usage refresh uses the cache-bypassing provider hook", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("current"));
+        const usageRefreshes = yield* Ref.make(0);
+        const fullRefreshes = yield* Ref.make(0);
+        const runtimeServices = yield* buildRegistryOverSnapshot(snapshot, {
+          refreshUsageNow: Ref.update(usageRefreshes, (count) => count + 1),
+          onRefresh: Ref.update(fullRefreshes, (count) => count + 1),
+        });
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const before = yield* Ref.get(fullRefreshes);
+          yield* registry.refreshUsage;
+          expect(yield* Ref.get(usageRefreshes)).toBe(1);
+          // Onboarding uses the same path after a sign-in, so status must still be re-checked.
+          expect(yield* Ref.get(fullRefreshes)).toBeGreaterThan(before);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

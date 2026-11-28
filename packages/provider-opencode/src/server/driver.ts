@@ -757,6 +757,13 @@ export const OpenCodeDriver: ProviderDriver<
         snapshot.installed &&
         snapshot.status !== "ready" &&
         snapshot.auth.status === "unknown",
+      refreshUsageOnInterval: (snapshot) =>
+        snapshot.enabled &&
+        snapshot.installed &&
+        snapshot.status === "ready" &&
+        snapshot.auth.status === "authenticated" &&
+        snapshot.usageLimits !== undefined &&
+        snapshot.usageLimits.unavailable?.reason !== "unsupported",
       initialSnapshot: (settings) =>
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,

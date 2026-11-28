@@ -9,10 +9,12 @@ import type { EnvironmentId, ServerProviderUsageWindow } from "@t3tools/contract
 import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
 import { collectLimitNotices } from "@t3tools/shared/usageLimitsCopy";
 import {
+  currentUsedPercent,
   deepSeekPricingPeriod,
   quotaCardModel,
-  quotaCountdown,
   quotaPace,
+  quotaRows,
+  shortQuotaCountdown,
 } from "@t3tools/shared/usageQuotaCards";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Clock3Icon, GaugeIcon } from "lucide-react";
@@ -42,22 +44,6 @@ function shortWindowLabel(window: ServerProviderUsageWindow, resolve: MessageRes
   if (window.kind === "weekly") return resolve(msg("Weekly"));
   if (window.kind === "monthly") return resolve(msg("Monthly"));
   return window.label;
-}
-
-function QuotaSummary({ window }: { readonly window: ServerProviderUsageWindow }) {
-  const gt = useGT();
-  const m = useMessages();
-  return (
-    <div className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
-      <span className="text-2xl font-medium leading-7 tracking-tight">
-        {Math.round(window.usedPercent)}
-        <span className="ml-0.5 text-sm text-muted-foreground">%</span>
-      </span>
-      <span className="text-3xs leading-3 text-muted-foreground">
-        {gt("{window} used", { window: shortWindowLabel(window, m) })}
-      </span>
-    </div>
-  );
 }
 
 function DeepSeekPricingStatus({ now }: { readonly now: number }) {
@@ -101,7 +87,95 @@ function DeepSeekPricingStatus({ now }: { readonly now: number }) {
   );
 }
 
-function QuotaFooter({
+function QuotaRow({
+  name,
+  window,
+  label,
+  color,
+  warnAt,
+  showPace,
+  now,
+}: {
+  readonly name: string;
+  readonly window: ServerProviderUsageWindow;
+  readonly label: string;
+  readonly color: string;
+  readonly warnAt: number;
+  readonly showPace: boolean;
+  readonly now: number;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const percent = currentUsedPercent(window, now);
+  const warn = percent >= warnAt;
+  const delta = showPace ? (quotaPace(window, now)?.deltaPercent ?? null) : null;
+  const expected = delta === null ? null : Math.max(0, Math.min(100, percent - delta));
+  const countdown = shortQuotaCountdown(window.resetsAt, now);
+  const valueLabel = m(msg("used"));
+  const windowLabel = shortWindowLabel(window, m);
+
+  return (
+    <>
+      <span className="min-w-0 break-words text-2xs leading-4 text-secondary-label">{label}</span>
+      <div
+        role="progressbar"
+        aria-label={gt("{name} {window} {value}", { name, window: label, value: valueLabel })}
+        aria-valuenow={percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="relative h-1.5 min-w-8 rounded-full bg-foreground/10"
+      >
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${Math.min(100, percent)}%`,
+            backgroundColor: warn ? "var(--warning)" : color,
+          }}
+        />
+        {expected === null ? null : (
+          <span
+            aria-hidden
+            className="absolute -inset-y-0.5 w-px bg-foreground/60"
+            style={{ left: `${expected}%` }}
+          />
+        )}
+      </div>
+      <span
+        className={`text-right text-2xs font-medium leading-4 tabular-nums ${warn ? "text-warning-foreground" : "text-foreground"}`}
+      >
+        {Math.round(percent)}%
+      </span>
+      {countdown !== null && window.resetsAt ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                tabIndex={0}
+                className="flex w-fit items-center gap-1 rounded-sm text-3xs leading-4 tabular-nums text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              />
+            }
+          >
+            <Clock3Icon className="size-2.5 shrink-0" aria-hidden />
+            {countdown === "Awaiting reset" ? m(msg("Awaiting reset")) : countdown}
+          </TooltipTrigger>
+          <TooltipPopup side="left">
+            {m(
+              msg("{window} resets {time}", {
+                window: windowLabel,
+                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+              }),
+            )}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        <span />
+      )}
+    </>
+  );
+}
+
+function PaceLine({
   window,
   now,
 }: {
@@ -109,10 +183,9 @@ function QuotaFooter({
   readonly now: number;
 }) {
   const m = useMessages();
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const countdown = quotaCountdown(window.resetsAt, now);
   const pace = quotaPace(window, now);
-  const delta = pace?.deltaPercent ?? null;
+  if (pace === null) return null;
+  const delta = pace.deltaPercent;
   const paceLabel =
     delta === null
       ? null
@@ -127,68 +200,36 @@ function QuotaFooter({
       : delta > 0
         ? "text-warning-foreground"
         : "text-success-foreground";
-  const windowLabel = shortWindowLabel(window, m);
 
   return (
-    <>
-      {countdown !== null && window.resetsAt ? (
+    <div className="col-span-full flex min-w-0 flex-wrap items-center justify-between gap-x-2 text-3xs leading-4 tabular-nums">
+      {paceLabel ? (
         <Tooltip>
           <TooltipTrigger
             render={
               <span
                 tabIndex={0}
-                className="flex w-fit max-w-full items-center gap-1.5 rounded-sm text-2xs leading-4 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className={`inline-flex items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${paceColor}`}
               />
             }
           >
-            <Clock3Icon className="size-3 shrink-0" aria-hidden />
-            <span className="tabular-nums">
-              {countdown === "Awaiting reset"
-                ? m(msg("{window} awaiting reset", { window: windowLabel }))
-                : m(msg("{window} resets in {countdown}", { window: windowLabel, countdown }))}
-            </span>
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />
+            {paceLabel}
           </TooltipTrigger>
           <TooltipPopup side="left">
-            {m(
-              msg("{window} resets {time}", {
-                window: windowLabel,
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
-              }),
-            )}
+            <T>
+              Pace compares quota used with the elapsed share of the billing period. The difference
+              is shown in percentage points.
+            </T>
           </TooltipPopup>
         </Tooltip>
       ) : null}
-      {pace !== null ? (
-        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t border-border/50 pt-2.5 text-3xs leading-4 tabular-nums">
-          {paceLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    tabIndex={0}
-                    className={`inline-flex items-center gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${paceColor}`}
-                  />
-                }
-              >
-                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />
-                {paceLabel}
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                <T>
-                  Pace compares quota used with the elapsed share of the billing period. The
-                  difference is shown in percentage points.
-                </T>
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <span className="text-muted-foreground">
-            {pace.dailyPercent === null
-              ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
-              : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
-          </span>
-        </div>
-      ) : null}
-    </>
+      <span className="ml-auto text-muted-foreground">
+        {pace.dailyPercent === null
+          ? m(msg("{percent}% left", { percent: pace.remainingPercent.toFixed(1) }))
+          : m(msg("{percent}% / day left", { percent: pace.dailyPercent.toFixed(1) }))}
+      </span>
+    </div>
   );
 }
 
@@ -204,9 +245,8 @@ function AccountQuotaCard({
   const gt = useGT();
   const m = useMessages();
   const model = quotaCardModel(account.driver, account.limits.windows);
-  if (model === null) return null;
+  if (model === null || model.groups.length === 0) return null;
   const { primary, isAntigravity, isOpenCodeGo } = model;
-  if (model.groups.length === 0) return null;
   const name =
     account.driver === "codex"
       ? "ChatGPT (Codex)"
@@ -222,6 +262,7 @@ function AccountQuotaCard({
           ? m(msg("Session quota"))
           : primary.label;
   const color = account.accentColor ?? barColor(account.driver);
+  const warnAt = isAntigravity ? 75 : 90;
 
   return (
     <section
@@ -229,134 +270,66 @@ function AccountQuotaCard({
         name,
         scope: isAntigravity ? gt("usage limits") : period.toLowerCase(),
       })}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-3.5"
+      className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5"
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-background/50">
-            <ProviderInstanceIcon
-              driverKind={account.driver}
-              displayName={name}
-              iconClassName="size-4"
-            />
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <ProviderInstanceIcon
+          driverKind={account.driver}
+          displayName={name}
+          iconClassName="size-3.5"
+        />
+        <h4 className="text-xs font-medium leading-4">{name}</h4>
+        {account.plan ? (
+          <span className="min-w-0 break-words text-3xs leading-4 text-muted-foreground">
+            {account.plan}
           </span>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <h4 className="truncate text-xs font-medium leading-4">{name}</h4>
-            {account.plan ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      tabIndex={0}
-                      className="truncate rounded-sm text-3xs leading-4 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  {account.plan}
-                </TooltipTrigger>
-                <TooltipPopup side="left">{account.plan}</TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {isOpenCodeGo ? <DeepSeekPricingStatus now={now} /> : null}
-            {showIdentity && account.email ? (
-              <RedactedSensitiveText
-                value={account.email}
-                ariaLabel={gt("Toggle account email visibility")}
-                revealTooltip={gt("Click to reveal account")}
-                hideTooltip={gt("Click to hide account")}
-                className="w-fit max-w-full truncate text-3xs text-muted-foreground"
-              />
-            ) : showIdentity && account.displayName ? (
-              <span className="truncate text-3xs text-muted-foreground">{account.displayName}</span>
-            ) : null}
-          </div>
-        </div>
-        {isAntigravity ? (
-          <span className="shrink-0 rounded-md bg-foreground/5 px-2 py-1 text-3xs leading-4 text-muted-foreground">
-            <T>Model quotas</T>
-          </span>
-        ) : (
-          <QuotaSummary window={primary} />
-        )}
+        ) : null}
+        {isOpenCodeGo ? <DeepSeekPricingStatus now={now} /> : null}
+        {showIdentity && account.email ? (
+          <RedactedSensitiveText
+            value={account.email}
+            ariaLabel={gt("Toggle account email visibility")}
+            revealTooltip={gt("Click to reveal account")}
+            hideTooltip={gt("Click to hide account")}
+            className="w-fit max-w-full truncate text-3xs text-muted-foreground"
+          />
+        ) : showIdentity && account.displayName ? (
+          <span className="truncate text-3xs text-muted-foreground">{account.displayName}</span>
+        ) : null}
       </div>
-      <div className="flex min-w-0 flex-col gap-2.5">
-        {model.groups.map((group) => {
-          const groupPrimary = group.primary;
-          const windows = group.windows;
+      <div className="grid min-w-0 grid-cols-[3.25rem_minmax(2rem,1fr)_2.25rem_3.75rem] items-center gap-x-2 gap-y-1">
+        {model.groups.map((group, groupIndex) => {
+          const groupPrimary = isAntigravity ? group.primary : primary;
           return (
-            <div
-              key={group.label ?? "quota"}
-              className="flex min-w-0 flex-col gap-2.5 not-first:border-t not-first:border-border/50 not-first:pt-2.5"
-            >
+            <div key={group.label ?? "quota"} className="contents">
               {group.label === null ? null : (
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <h5 className="pt-1 text-2xs font-medium leading-4 text-secondary-label">
-                    {group.label}
-                  </h5>
-                  {groupPrimary ? <QuotaSummary window={groupPrimary} /> : null}
-                </div>
+                <h5
+                  className={`col-span-full text-3xs font-medium leading-4 text-muted-foreground ${groupIndex === 0 ? "" : "pt-1"}`}
+                >
+                  {group.label}
+                </h5>
               )}
-              {windows.map((window) => {
-                const left =
-                  !isAntigravity && window === primary
-                    ? null
-                    : quotaCountdown(window.resetsAt, now);
-                const label =
-                  isAntigravity && window.kind === "other"
-                    ? window.label.split(" · ").slice(1).join(" · ") || window.label
-                    : shortWindowLabel(window, m);
-                const percent = window.usedPercent;
-                const valueLabel = m(msg("used"));
-                return (
-                  <div key={window.id} className="flex min-w-0 flex-col gap-1.5">
-                    <div className="flex min-w-0 items-baseline justify-between gap-2 text-2xs leading-4 tabular-nums">
-                      <span className="min-w-0 break-words text-secondary-label">{label}</span>
-                      <div className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 gap-y-0.5">
-                        {left === null ? null : (
-                          <span className="text-3xs text-muted-foreground">
-                            {left === "Awaiting reset"
-                              ? m(msg("Awaiting reset"))
-                              : m(msg("{time} left", { time: left }))}
-                          </span>
-                        )}
-                        <span className="font-medium text-secondary-label">
-                          {Math.round(percent)}%
-                          <span className="ml-1 font-normal text-muted-foreground">
-                            {valueLabel}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-                    <div
-                      role="progressbar"
-                      aria-label={gt("{name} {window} {value}", {
-                        name,
-                        window: label,
-                        value: valueLabel,
-                      })}
-                      aria-valuenow={percent}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      className="h-1.5 overflow-hidden rounded-full bg-foreground/10"
-                    >
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${percent}%`,
-                          backgroundColor:
-                            isAntigravity && percent >= 75 ? "var(--warning)" : color,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-              {groupPrimary ? <QuotaFooter window={groupPrimary} now={now} /> : null}
+              {quotaRows(groupPrimary, group.windows).map((window) => (
+                <QuotaRow
+                  key={window.id}
+                  name={name}
+                  window={window}
+                  label={
+                    isAntigravity && window.kind === "other"
+                      ? window.label.split(" · ").slice(1).join(" · ") || window.label
+                      : shortWindowLabel(window, m)
+                  }
+                  color={color}
+                  warnAt={warnAt}
+                  showPace={window === groupPrimary}
+                  now={now}
+                />
+              ))}
+              {groupPrimary ? <PaceLine window={groupPrimary} now={now} /> : null}
             </div>
           );
         })}
       </div>
-      {isAntigravity ? null : <QuotaFooter window={primary} now={now} />}
     </section>
   );
 }
@@ -442,25 +415,29 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
           </Button>
         </div>
       </div>
-      {accounts.map((account) => (
-        <AccountQuotaCard
-          key={account.key}
-          account={account}
-          showIdentity={
-            accounts.filter((candidate) => candidate.driver === account.driver).length > 1
-          }
-          now={now}
-        />
-      ))}
+      {accounts.length > 0 ? (
+        <div className="flex min-w-0 flex-col divide-y divide-border/50 rounded-xl border border-border/60 bg-card">
+          {accounts.map((account) => (
+            <AccountQuotaCard
+              key={account.key}
+              account={account}
+              showIdentity={
+                accounts.filter((candidate) => candidate.driver === account.driver).length > 1
+              }
+              now={now}
+            />
+          ))}
+        </div>
+      ) : null}
       {accounts.length === 0 && notices.length === 0 ? (
-        <p className="dropdown-glass rounded-xl p-3.5 text-2xs leading-relaxed text-muted-foreground">
+        <p className="dropdown-glass rounded-xl px-3 py-2.5 text-2xs leading-relaxed text-muted-foreground">
           <T>No subscription limits reported by connected providers.</T>
         </p>
       ) : null}
       {notices.map((notice) => (
         <p
           key={notice}
-          className="dropdown-glass rounded-xl p-3.5 text-2xs leading-relaxed text-muted-foreground"
+          className="dropdown-glass rounded-xl px-3 py-2 text-2xs leading-relaxed text-muted-foreground"
         >
           {notice}
         </p>

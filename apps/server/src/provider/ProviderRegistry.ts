@@ -72,6 +72,9 @@ export class ProviderRegistry extends Context.Service<
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /** Explicit usage refresh: bypasses provider usage caches and probes every instance. */
+    readonly refreshUsage: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
     readonly reloadSecretsAndRefresh: (
       instanceId?: ProviderInstanceId,
@@ -1431,12 +1434,29 @@ export const layer = Layer.effect(
       }
     });
 
+    // A full refresh after clearing usage caches: callers like onboarding also need status and auth.
+    const refreshUsage = Effect.fn("ProviderRegistry.refreshUsage")(function* () {
+      yield* syncLiveSourcesAndContinue;
+      const instances = [...(yield* Ref.get(liveSubsRef)).values()];
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          (instance.snapshot.refreshUsageNow ?? Effect.void).pipe(
+            Effect.catchCause(recoverRefreshFailure),
+            Effect.asVoid,
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* refresh();
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshUsage: refreshUsage().pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       rebuildMissingAndRefresh: rebuildMissingAndRefresh().pipe(

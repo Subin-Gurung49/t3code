@@ -17,6 +17,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import { nextAlignedRefreshDelay } from "./alignedRefreshSchedule.ts";
 import * as ProviderHost from "./ProviderHost.ts";
 import {
   applyUsageLimitsUpdate,
@@ -90,6 +91,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
+  readonly refreshUsageOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
 }): Effect.fn.Return<
   ManagedServerProvider,
@@ -325,14 +327,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
   });
 
-  const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
+  const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* (options?: {
+    readonly force?: boolean;
+  }) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
-    if (
-      !snapshot.enabled ||
-      !snapshot.usageLimits ||
-      snapshot.usageLimits.unavailable?.reason === "unsupported"
-    )
-      return;
+    const hasRefreshableUsage =
+      snapshot.usageLimits !== undefined &&
+      snapshot.usageLimits.unavailable?.reason !== "unsupported";
+    if (!snapshot.enabled || (options?.force !== true && !hasRefreshableUsage)) return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
     const claim = Symbol();
     const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
@@ -368,27 +370,37 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     input.refreshOnInterval !== false &&
     (typeof input.refreshOnInterval !== "function" || input.refreshOnInterval(snapshot));
 
+  const needsUsageRefresh = (snapshot: ServerProvider) =>
+    input.checkUsageLimits !== undefined &&
+    input.refreshUsageOnInterval !== undefined &&
+    input.refreshUsageOnInterval !== false &&
+    (typeof input.refreshUsageOnInterval !== "function" || input.refreshUsageOnInterval(snapshot));
+
   const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* (
     deferFailure: boolean,
   ) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits || !deferFailure) {
-      if (needsProviderRefresh(snapshot)) {
-        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
-      }
+    if (
+      deferFailure &&
+      input.checkUsageLimits &&
+      (needsUsageRecovery(snapshot) || needsUsageRefresh(snapshot))
+    ) {
+      const probed = yield* input.checkUsageLimits;
+      const next = yield* Ref.modify(snapshotStateRef, (state) => {
+        const usageLimits = resolveUsageLimitsAfterProbe({
+          published: state.snapshot.usageLimits,
+          probed,
+        });
+        const snapshot = withUsageLimits(state.snapshot, usageLimits);
+        return [snapshot, { ...state, snapshot }] as const;
+      });
+      yield* PubSub.publish(changesPubSub, next);
       return;
     }
-    const probed = yield* input.checkUsageLimits;
-    const next = yield* Ref.modify(snapshotStateRef, (state) => {
-      const usageLimits = resolveUsageLimitsAfterProbe({
-        published: state.snapshot.usageLimits,
-        probed,
-      });
-      const snapshot = withUsageLimits(state.snapshot, usageLimits);
-      return [snapshot, { ...state, snapshot }] as const;
-    });
-    yield* PubSub.publish(changesPubSub, next);
+    if (needsProviderRefresh(snapshot)) {
+      yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
+    }
   });
 
   const shouldRefreshOnInterval = Effect.gen(function* () {
@@ -397,7 +409,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
+      (!needsUsageRecovery(state.snapshot) &&
+        !needsUsageRefresh(state.snapshot) &&
+        !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }
@@ -420,7 +434,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
         );
 
-  const refreshScheduleChanges = yield* Queue.sliding<void>(1);
+  const refreshScheduleChanges = yield* Queue.sliding<"activity" | "settings">(16);
   if (input.refreshInterval === undefined) {
     const serverSettingsChanges = yield* host.settings.subscribe;
     yield* serverSettingsChanges.pipe(
@@ -430,7 +444,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ),
       ),
       Stream.changes,
-      Stream.runForEach(() => Queue.offer(refreshScheduleChanges, undefined).pipe(Effect.asVoid)),
+      Stream.runForEach(() => Queue.offer(refreshScheduleChanges, "settings").pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
+  }
+  if (host.backgroundActivityChanges !== undefined) {
+    yield* host.backgroundActivityChanges.pipe(
+      Stream.runForEach(() => Queue.offer(refreshScheduleChanges, "activity").pipe(Effect.asVoid)),
       Effect.forkScoped,
     );
   }
@@ -441,79 +461,123 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
+  const skippedPeriodicBoundaryRef = yield* Ref.make(false);
+  const nextPeriodicBoundaryRef = yield* Ref.make<number | null>(null);
   yield* Effect.forever(
     Effect.all([getRefreshInterval, Ref.get(recheckDeadlineRef), Clock.currentTimeMillis]).pipe(
-      Effect.flatMap(([configuredInterval, recheckDeadline, now]) => {
-        const configuredIntervalMs = Duration.toMillis(
-          Duration.fromInputUnsafe(configuredInterval),
-        );
-        const hasPendingRetry = recheckDeadline !== null;
-        const retryDelayMs = hasPendingRetry ? Math.max(0, recheckDeadline - now) : 0;
-        const waitMs = hasPendingRetry
-          ? retryDelayMs
-          : configuredIntervalMs > 0
-            ? configuredIntervalMs
-            : 60_000;
-        const waitForInterval = Effect.sleep(waitMs).pipe(Effect.as(true));
-        const waitForScheduleChange = Queue.take(refreshScheduleChanges).pipe(Effect.as(false));
-        const wait =
-          hasPendingRetry && retryDelayMs === 0
-            ? Effect.succeed(true)
-            : Effect.raceFirst(waitForInterval, waitForScheduleChange);
-        const refreshIfNeeded = shouldRefreshOnInterval.pipe(
-          Effect.flatMap((shouldRefresh) => {
-            if (!shouldRefresh) {
-              if (recheckDeadline === null) return Effect.void;
-              const nextCheckDelayMs = configuredIntervalMs > 0 ? configuredIntervalMs : 60_000;
-              return Clock.currentTimeMillis.pipe(
-                Effect.flatMap((checkedAt) =>
-                  Ref.update(recheckDeadlineRef, (current) =>
-                    current === recheckDeadline ? checkedAt + nextCheckDelayMs : current,
-                  ),
-                ),
-              );
-            }
-            return refreshSemaphore.withPermits(1)(
-              Effect.gen(function* () {
-                const currentDeadline = yield* Ref.get(recheckDeadlineRef);
-                const currentTime = yield* Clock.currentTimeMillis;
-                if (
-                  (recheckDeadline !== null && currentDeadline === null) ||
-                  (currentDeadline !== null && currentDeadline > currentTime)
-                )
-                  return;
-                const retryPending = currentDeadline !== null;
-                yield* refreshOnInterval(!retryPending).pipe(
-                  Effect.tap(() =>
-                    retryPending ? Ref.set(recheckDeadlineRef, null) : Effect.void,
-                  ),
+      Effect.flatMap(([configuredInterval, recheckDeadline, now]) =>
+        Effect.gen(function* () {
+          const configuredIntervalMs = Duration.toMillis(
+            Duration.fromInputUnsafe(configuredInterval),
+          );
+          const intervalDelayMs =
+            configuredIntervalMs > 0
+              ? Duration.toMillis(yield* nextAlignedRefreshDelay(configuredInterval, now))
+              : 0;
+          yield* Ref.set(
+            nextPeriodicBoundaryRef,
+            configuredIntervalMs > 0 ? now + intervalDelayMs : null,
+          );
+          const hasPendingRetry = recheckDeadline !== null;
+          const waitNow = yield* Clock.currentTimeMillis;
+          const retryDelayMs = hasPendingRetry ? Math.max(0, recheckDeadline - waitNow) : 0;
+          const waitMs = hasPendingRetry
+            ? retryDelayMs
+            : configuredIntervalMs > 0
+              ? Math.max(0, now + intervalDelayMs - waitNow)
+              : 60_000;
+          const waitForSignal = Queue.take(refreshScheduleChanges);
+          const wait =
+            waitMs === 0
+              ? Effect.succeed(null)
+              : waitForSignal.pipe(
+                  Effect.timeoutOrElse({
+                    duration: Duration.millis(waitMs),
+                    orElse: () => Effect.succeed(null),
+                  }),
                 );
-              }),
-            );
-          }),
-        );
-        const refreshWithRetryBackoff = hasPendingRetry
-          ? refreshIfNeeded.pipe(
-              Effect.catchCause((cause) =>
-                Clock.currentTimeMillis.pipe(
-                  Effect.flatMap((failedAt) =>
-                    Ref.update(recheckDeadlineRef, (current) =>
-                      current === null ? null : failedAt + FAILED_CHECK_RECHECK_DELAY_MS,
-                    ),
-                  ),
-                  Effect.andThen(Effect.failCause(cause)),
-                ),
+          const refreshIfNeeded = (ignoreRetryDeadline = false) =>
+            shouldRefreshOnInterval.pipe(
+              Effect.flatMap((shouldRefresh) =>
+                Effect.gen(function* () {
+                  if (!shouldRefresh) {
+                    if (configuredIntervalMs > 0) {
+                      yield* Ref.set(skippedPeriodicBoundaryRef, true);
+                    }
+                    if (recheckDeadline === null) return;
+                    const nextCheckDelayMs =
+                      configuredIntervalMs > 0 ? configuredIntervalMs : 60_000;
+                    yield* Clock.currentTimeMillis.pipe(
+                      Effect.flatMap((checkedAt) =>
+                        Ref.update(recheckDeadlineRef, (current) =>
+                          current === recheckDeadline ? checkedAt + nextCheckDelayMs : current,
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  yield* refreshSemaphore.withPermits(1)(
+                    Effect.gen(function* () {
+                      const currentDeadline = yield* Ref.get(recheckDeadlineRef);
+                      const currentTime = yield* Clock.currentTimeMillis;
+                      if (
+                        !ignoreRetryDeadline &&
+                        ((recheckDeadline !== null && currentDeadline === null) ||
+                          (currentDeadline !== null && currentDeadline > currentTime))
+                      )
+                        return;
+                      yield* Ref.set(skippedPeriodicBoundaryRef, false);
+                      const retryPending = currentDeadline !== null;
+                      yield* refreshOnInterval(!retryPending).pipe(
+                        Effect.tap(() =>
+                          retryPending ? Ref.set(recheckDeadlineRef, null) : Effect.void,
+                        ),
+                      );
+                    }),
+                  );
+                }),
               ),
-            )
-          : refreshIfNeeded;
-        return wait.pipe(
-          Effect.flatMap((intervalElapsed) =>
-            intervalElapsed && (hasPendingRetry || configuredIntervalMs > 0)
-              ? refreshWithRetryBackoff
-              : Effect.void,
-          ),
-        );
-      }),
+            );
+          const refreshWithRetryBackoff = hasPendingRetry
+            ? refreshIfNeeded().pipe(
+                Effect.catchCause((cause) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((failedAt) =>
+                      Ref.update(recheckDeadlineRef, (current) =>
+                        current === null ? null : failedAt + FAILED_CHECK_RECHECK_DELAY_MS,
+                      ),
+                    ),
+                    Effect.andThen(Effect.failCause(cause)),
+                  ),
+                ),
+              )
+            : refreshIfNeeded();
+          return yield* wait.pipe(
+            Effect.flatMap((signal) =>
+              Effect.gen(function* () {
+                if (signal === null) {
+                  if (hasPendingRetry || configuredIntervalMs > 0) {
+                    yield* refreshWithRetryBackoff;
+                  }
+                  return;
+                }
+                if (signal !== "activity" || configuredIntervalMs <= 0) return;
+                const [skipped, nextPeriodicBoundary, currentTime] = yield* Effect.all([
+                  Ref.get(skippedPeriodicBoundaryRef),
+                  Ref.get(nextPeriodicBoundaryRef),
+                  Clock.currentTimeMillis,
+                ]);
+                if (
+                  skipped ||
+                  (nextPeriodicBoundary !== null && currentTime >= nextPeriodicBoundary)
+                ) {
+                  yield* refreshIfNeeded(true);
+                }
+              }),
+            ),
+          );
+        }),
+      ),
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
@@ -536,15 +600,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
-    refresh: Queue.offer(refreshScheduleChanges, undefined).pipe(
-      Effect.andThen(input.resolveMaintenance({ fresh: true })),
-      Effect.andThen(refreshSnapshot),
-      Effect.ensuring(Queue.offer(refreshScheduleChanges, undefined)),
-      Effect.tapError(Effect.logError),
-      Effect.orDie,
-    ),
+    refresh: input
+      .resolveMaintenance({ fresh: true })
+      .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     refreshUsage: refreshUsage(),
+    refreshUsageNow: refreshUsage({ force: true }),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

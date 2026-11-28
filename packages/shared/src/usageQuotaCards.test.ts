@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   antigravityQuotaGroups,
+  currentUsedPercent,
   deepSeekPricingPeriod,
   primaryQuotaWindow,
   quotaCardModel,
   quotaCountdown,
   quotaPace,
+  quotaRows,
+  shortQuotaCountdown,
 } from "./usageQuotaCards.ts";
 
 const now = Date.parse("2026-10-24T12:00:00.000Z");
@@ -233,5 +236,52 @@ describe("quota summaries", () => {
     expect(quotaCountdown("2026-10-24T12:00:01.000Z", now)).toBe("1m");
     expect(quotaCountdown("2026-10-24T12:00:00.000Z", now)).toBe("Awaiting reset");
     expect(quotaCountdown(undefined, now)).toBeNull();
+  });
+});
+
+describe("compact quota rows", () => {
+  const session: ServerProviderUsageWindow = {
+    id: "session",
+    kind: "session",
+    label: "5h",
+    usedPercent: 10,
+    windowDurationMins: 300,
+  };
+  const monthly: ServerProviderUsageWindow = {
+    id: "monthly",
+    kind: "monthly",
+    label: "Monthly",
+    usedPercent: 58,
+    windowDurationMins: 30 * 24 * 60,
+  };
+
+  it("lists the headline window with the others, longest first", () => {
+    expect(quotaRows(weekly, [session]).map((window) => window.id)).toEqual(["weekly", "session"]);
+    expect(quotaRows(monthly, [session, weekly]).map((window) => window.id)).toEqual([
+      "monthly",
+      "weekly",
+      "session",
+    ]);
+    expect(quotaRows(weekly, [weekly, session]).map((window) => window.id)).toEqual([
+      "weekly",
+      "session",
+    ]);
+    expect(quotaRows(null, [session]).map((window) => window.id)).toEqual(["session"]);
+  });
+
+  it("keeps the two largest countdown units", () => {
+    expect(shortQuotaCountdown("2026-11-06T09:54:00.000Z", now)).toBe("12d 21h");
+    expect(shortQuotaCountdown("2026-10-24T16:53:00.000Z", now)).toBe("4h 53m");
+    expect(shortQuotaCountdown("2026-10-24T12:23:00.000Z", now)).toBe("23m");
+    expect(shortQuotaCountdown("2026-10-24T12:00:00.000Z", now)).toBe("Awaiting reset");
+    expect(shortQuotaCountdown(undefined, now)).toBeNull();
+  });
+});
+
+describe("current used percent", () => {
+  it("treats a window past its reset as refilled", () => {
+    expect(currentUsedPercent(weekly, now)).toBe(35);
+    expect(currentUsedPercent({ ...weekly, resetsAt: "2026-10-24T12:00:00.000Z" }, now)).toBe(0);
+    expect(currentUsedPercent({ ...weekly, resetsAt: undefined }, now)).toBe(35);
   });
 });

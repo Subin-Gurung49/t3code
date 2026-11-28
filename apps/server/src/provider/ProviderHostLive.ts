@@ -56,6 +56,7 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      ...(backgroundPolicy.changes ? { backgroundActivityChanges: backgroundPolicy.changes } : {}),
       ...Option.match(lifecycleEvents, {
         onNone: () => ({}),
         onSome: (events) => ({ awaitServerReady: events.awaitReady }),

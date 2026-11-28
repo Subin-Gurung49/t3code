@@ -93,7 +93,8 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, 
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
+    // Keep the host's real OpenCode key out of the driver's local-usage probe.
+    environment: [{ name: "OPENCODE_AUTH_CONTENT", sensitive: true, value: "{}" }],
     enabled,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
@@ -1270,7 +1271,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       unsupported: false,
       ...scenario,
     })),
-  )("Go usage recovery $name without restarting a ready catalog", (scenario) =>
+  )("Go usage recovery and refresh $name without restarting a ready catalog", (scenario) =>
     Effect.gen(function* () {
       const usageStarted = yield* Deferred.make<void>();
       let usageReads = 0;
@@ -1424,8 +1425,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       );
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
-      yield* TestClock.adjust("15 minutes");
-      assert.strictEqual(usageReads, expectedReads);
+      for (let tick = 0; tick < 3; tick++) {
+        yield* TestClock.adjust("5 minutes");
+      }
+      assert.strictEqual(usageReads, expectedReads + (shouldRecover ? 3 : 0));
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),

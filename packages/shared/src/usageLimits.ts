@@ -642,12 +642,19 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
 
+/** A window past its reset has refilled, even before the provider reports the new reading. */
+export function windowRefilled(window: ServerProviderUsageWindow, now: number) {
+  const at = resetMillis(window);
+  return at !== null && at <= now;
+}
+
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
   const spentWeekly =
     reported.kind === "session"
       ? account.limits.windows.find(
           (window) =>
             window.usedPercent >= 100 &&
+            !windowRefilled(window, now) &&
             (account.driver === "claudeAgent"
               ? window.id === "seven_day"
               : account.driver === "codex" && window.kind === "weekly"),
@@ -702,7 +709,13 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
     for (const reported of account.limits.windows) {
-      const member = poolMember(account, reported, now);
+      const member = poolMember(
+        account,
+        windowRefilled(reported, now)
+          ? { ...reported, usedPercent: 0, resetsAt: undefined }
+          : reported,
+        now,
+      );
       const { window } = member;
       const pooled = poolKey(account.driver, window);
       const key = byKey.get(pooled)?.some((member) => member.account === account)

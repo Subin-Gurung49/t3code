@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -99,9 +100,10 @@ const refreshedSnapshotSecond: ServerProvider = {
 };
 
 function layerProviderHost(input: {
-  readonly runBackgroundWork: boolean;
+  readonly runBackgroundWork: boolean | (() => Effect.Effect<boolean>);
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
   readonly awaitServerReady?: Effect.Effect<void>;
+  readonly backgroundActivityChanges?: Stream.Stream<void>;
 }) {
   return Layer.succeed(
     ProviderHost.ProviderHost,
@@ -120,7 +122,13 @@ function layerProviderHost(input: {
         changes: Stream.empty,
         subscribe: Effect.succeed(Stream.empty),
       },
-      shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      shouldRunBackgroundWork: () =>
+        typeof input.runBackgroundWork === "function"
+          ? input.runBackgroundWork()
+          : Effect.succeed(input.runBackgroundWork),
+      ...(input.backgroundActivityChanges
+        ? { backgroundActivityChanges: input.backgroundActivityChanges }
+        : {}),
       ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
@@ -377,46 +385,46 @@ describe("makeManagedServerProvider", () => {
     ),
   );
 
-  it.effect("restarts the periodic interval after a manual refresh", () =>
+  it.effect("keeps periodic checks on aligned boundaries across manual refreshes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const checkCalls = yield* Ref.make(0);
+        const checkedAt = yield* Ref.make<ReadonlyArray<number>>([]);
         const initialCheckDone = yield* Deferred.make<void>();
         const automaticCheckDone = yield* Deferred.make<void>();
         const manualCheckStarted = yield* Deferred.make<void>();
+        const periodicAfterManualDone = yield* Deferred.make<void>();
         const releaseManualCheck = yield* Deferred.make<void>();
+        yield* TestClock.adjust("2 minutes");
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
-            Effect.tap((count) =>
-              count === 1
-                ? Deferred.succeed(initialCheckDone, undefined)
-                : count === 3
-                  ? Deferred.succeed(automaticCheckDone, undefined)
-                  : count === 4
-                    ? Deferred.succeed(manualCheckStarted, undefined).pipe(
-                        Effect.andThen(Deferred.await(releaseManualCheck)),
-                      )
-                    : Effect.void,
-            ),
-            Effect.as(refreshedSnapshot),
-          ),
+          checkProvider: Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(checkCalls, (count) => count + 1);
+            const now = yield* Clock.currentTimeMillis;
+            yield* Ref.update(checkedAt, (times) => [...times, now]);
+            if (count === 1) yield* Deferred.succeed(initialCheckDone, undefined);
+            if (count === 3) yield* Deferred.succeed(automaticCheckDone, undefined);
+            if (count === 4) {
+              yield* Deferred.succeed(manualCheckStarted, undefined);
+              yield* Deferred.await(releaseManualCheck);
+            }
+            if (count === 5) yield* Deferred.succeed(periodicAfterManualDone, undefined);
+            return refreshedSnapshot;
+          }),
           refreshInterval: "5 minutes",
         });
 
         yield* Deferred.await(initialCheckDone);
-        yield* TestClock.adjust("4 minutes");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("2 minutes");
         yield* provider.refresh;
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
 
         yield* TestClock.adjust("1 minute");
-        assert.strictEqual(yield* Ref.get(checkCalls), 2);
-
-        yield* TestClock.adjust("4 minutes");
         yield* Deferred.await(automaticCheckDone);
         assert.strictEqual(yield* Ref.get(checkCalls), 3);
 
@@ -426,13 +434,103 @@ describe("makeManagedServerProvider", () => {
         yield* TestClock.adjust("1 minute");
         yield* Deferred.succeed(releaseManualCheck, undefined);
         yield* Fiber.join(manualRefresh);
+        yield* Deferred.await(periodicAfterManualDone);
 
-        yield* TestClock.adjust("4 minutes");
-        assert.strictEqual(yield* Ref.get(checkCalls), 4);
-        yield* TestClock.adjust("1 minute");
         assert.strictEqual(yield* Ref.get(checkCalls), 5);
+        assert.deepStrictEqual(yield* Ref.get(checkedAt), [
+          2 * 60_000,
+          4 * 60_000,
+          5 * 60_000,
+          9 * 60_000,
+          10 * 60_000,
+        ]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("runs periodic checks on aligned boundaries", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const periodicCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined)
+                : Deferred.succeed(periodicCheckDone, undefined),
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "5 minutes",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* TestClock.adjust("5 minutes");
+        yield* Deferred.await(periodicCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("catches up immediately when activity resumes after a skipped boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const demand = yield* Ref.make(false);
+        const activityChanges = yield* PubSub.unbounded<void>();
+        const host = yield* Layer.build(
+          Layer.mergeAll(
+            layerProviderHost({
+              runBackgroundWork: () => Ref.get(demand),
+              backgroundActivityChanges: Stream.fromPubSub(activityChanges),
+            }),
+            TestClock.layer(),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const checkCalls = yield* Ref.make(0);
+          const checkedAt = yield* Ref.make<ReadonlyArray<number>>([]);
+          const initialCheckDone = yield* Deferred.make<void>();
+          const resumedCheckDone = yield* Deferred.make<void>();
+          yield* TestClock.adjust("1 minute");
+          yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(checkCalls, (count) => count + 1);
+              const now = yield* Clock.currentTimeMillis;
+              yield* Ref.update(checkedAt, (times) => [...times, now]);
+              if (count === 1) yield* Deferred.succeed(initialCheckDone, undefined);
+              if (count === 2) yield* Deferred.succeed(resumedCheckDone, undefined);
+              return refreshedSnapshot;
+            }),
+            refreshInterval: "5 minutes",
+          });
+
+          yield* Deferred.await(initialCheckDone);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("4 minutes");
+          yield* Effect.yieldNow;
+          assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+          yield* TestClock.adjust("2 minutes");
+          yield* Ref.set(demand, true);
+          yield* PubSub.publish(activityChanges, undefined);
+          yield* Deferred.await(resumedCheckDone);
+
+          assert.deepStrictEqual(yield* Ref.get(checkedAt), [60_000, 7 * 60_000]);
+        }).pipe(Effect.provide(host));
+      }),
+    ),
   );
 
   it.effect("stops periodic recovery checks once the snapshot is ready", () =>
@@ -461,6 +559,7 @@ describe("makeManagedServerProvider", () => {
         );
         yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseInitialCheck, undefined);
+        yield* Effect.yieldNow;
         yield* TestClock.adjust("1 second");
 
         assert.deepStrictEqual(Array.from(yield* Fiber.join(updates)), [

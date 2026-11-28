@@ -2622,6 +2622,12 @@ export const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
+            const usageRefresh =
+              input.instanceId === undefined &&
+              input.cwd === undefined &&
+              input.refreshModels !== true &&
+              input.reloadSecrets !== true &&
+              input.fresh !== true;
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
@@ -2633,7 +2639,9 @@ export const layerWsRpc = (
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+                  : usageRefresh
+                    ? providerRegistry.refreshUsage
+                    : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {

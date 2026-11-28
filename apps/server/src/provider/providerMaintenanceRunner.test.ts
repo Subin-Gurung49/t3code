@@ -208,6 +208,7 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
+      refreshUsage: Ref.get(providersRef),
       reloadSecretsAndRefresh: () => Ref.get(providersRef),
       rebuildMissingAndRefresh: Ref.get(providersRef),
       applySecretAndRefresh: () => Ref.get(providersRef),
@@ -1039,6 +1040,7 @@ describe("providerMaintenanceRunner", () => {
           generateReviewGuide: () => Effect.die("unused"),
           generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generatePromptPolish: () => Effect.die("unused"),
+          generatePromptSuggestion: () => Effect.die("unused"),
           generateThreadTitle: () =>
             Effect.sync(() => {
               log.push("text generation spawned provider");

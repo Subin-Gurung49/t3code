@@ -15,6 +15,10 @@
       "types": "./src/server/adapterDriver.ts",
       "import": "./src/server/adapterDriver.ts"
     },
+    "./server/alignedRefreshSchedule": {
+      "types": "./src/server/alignedRefreshSchedule.ts",
+      "import": "./src/server/alignedRefreshSchedule.ts"
+    },
     "./server/attachmentPrompt": {
       "types": "./src/server/attachmentPrompt.ts",
       "import": "./src/server/attachmentPrompt.ts"

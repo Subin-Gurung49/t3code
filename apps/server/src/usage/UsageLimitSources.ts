@@ -13,7 +13,9 @@ import {
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { antigravityWindowLimitsModel, hubRoutes } from "@t3tools/shared/usageLimits";
+import { nextAlignedRefreshDelay } from "@t3tools/provider-core/server/alignedRefreshSchedule";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -266,10 +268,13 @@ export const make = Effect.gen(function* () {
     return result;
   }, refreshLock.withPermits(1));
 
+  const refreshScheduleChanges = yield* Queue.sliding<"activity" | "settings">(16);
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
-    Stream.runForEach(() => refresh),
+    Stream.runForEach(() =>
+      Queue.offer(refreshScheduleChanges, "settings").pipe(Effect.andThen(refresh)),
+    ),
     Effect.forkScoped,
   );
 
@@ -279,27 +284,61 @@ export const make = Effect.gen(function* () {
     ),
     Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
   );
-  const refreshScheduleChanges = yield* Queue.sliding<void>(1);
+  if (backgroundPolicy.changes !== undefined) {
+    yield* backgroundPolicy.changes.pipe(
+      Stream.runForEach(() => Queue.offer(refreshScheduleChanges, "activity").pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
+  }
+  const skippedPeriodicBoundaryRef = yield* Ref.make(false);
+  const nextPeriodicBoundaryRef = yield* Ref.make<number | null>(null);
   yield* Effect.forever(
-    interval.pipe(
-      Effect.flatMap((wait) =>
-        // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - a manual refresh restarts the interval, not a timeout
-        Effect.raceFirst(
-          Effect.sleep(Duration.isPositive(wait) ? wait : "60 seconds").pipe(Effect.as(true)),
-          Queue.take(refreshScheduleChanges).pipe(Effect.as(false)),
-        ),
-      ),
-      Effect.flatMap((intervalElapsed) =>
-        intervalElapsed
-          ? interval.pipe(
-              Effect.flatMap((current) =>
-                Duration.isPositive(current)
-                  ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
-                  : Effect.succeed(false),
-              ),
-              Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
-            )
-          : Effect.void,
+    Effect.all([interval, Clock.currentTimeMillis]).pipe(
+      Effect.flatMap(([configuredInterval, now]) =>
+        Effect.gen(function* () {
+          const enabled = Duration.isPositive(configuredInterval);
+          const initialWait = enabled
+            ? yield* nextAlignedRefreshDelay(configuredInterval, now)
+            : Duration.seconds(60);
+          const nextPeriodicBoundary = enabled ? now + Duration.toMillis(initialWait) : null;
+          yield* Ref.set(nextPeriodicBoundaryRef, nextPeriodicBoundary);
+          const currentTime = yield* Clock.currentTimeMillis;
+          const wait = Duration.millis(
+            nextPeriodicBoundary === null
+              ? 60_000
+              : Math.max(0, nextPeriodicBoundary - currentTime),
+          );
+          const signal =
+            Duration.toMillis(wait) === 0
+              ? null
+              : yield* Queue.take(refreshScheduleChanges).pipe(
+                  Effect.timeoutOrElse({
+                    duration: wait,
+                    orElse: () => Effect.succeed(null),
+                  }),
+                );
+          if (signal === "settings") return;
+          const [skipped, scheduledBoundary, resumedAt] = yield* Effect.all([
+            Ref.get(skippedPeriodicBoundaryRef),
+            Ref.get(nextPeriodicBoundaryRef),
+            Clock.currentTimeMillis,
+          ]);
+          const shouldCatchUp =
+            signal === "activity" &&
+            enabled &&
+            (skipped || (scheduledBoundary !== null && resumedAt >= scheduledBoundary));
+          if (signal === "activity" && !shouldCatchUp) return;
+          if (signal === null && !enabled) return;
+          const shouldRun = yield* backgroundPolicy.shouldRunScopeWork({
+            type: "provider-status",
+          });
+          if (!shouldRun) {
+            if (enabled) yield* Ref.set(skippedPeriodicBoundaryRef, true);
+            return;
+          }
+          yield* Ref.set(skippedPeriodicBoundaryRef, false);
+          yield* refresh;
+        }),
       ),
       Effect.ignoreCause({ log: true }),
     ),
@@ -310,10 +349,7 @@ export const make = Effect.gen(function* () {
   return {
     current: Ref.get(stateRef),
     consumeResetCredit,
-    refresh: Queue.offer(refreshScheduleChanges, undefined).pipe(
-      Effect.andThen(refresh),
-      Effect.ensuring(Queue.offer(refreshScheduleChanges, undefined)),
-    ),
+    refresh,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

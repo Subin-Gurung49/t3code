@@ -1,6 +1,6 @@
 import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { elapsedShare } from "./usageLimits.ts";
+import { elapsedShare, windowRefilled } from "./usageLimits.ts";
 
 const DAY_MS = 86_400_000;
 // https://en.bjhd.gov.cn/workinginhaidian/supportingservices/publicholidays/202512/t20251211_4797062.shtml
@@ -125,6 +125,28 @@ export function quotaPace(window: ServerProviderUsageWindow, now: number) {
     dailyPercent: daysLeft >= 1 ? remaining / daysLeft : null,
     deltaPercent: elapsed === null ? null : window.usedPercent - elapsed * 100,
   };
+}
+
+/** Every window of a card or group as one row: the headline window too, longest window first. */
+export function quotaRows(
+  primary: ServerProviderUsageWindow | null,
+  windows: readonly ServerProviderUsageWindow[],
+) {
+  const rows = primary === null || windows.includes(primary) ? [...windows] : [primary, ...windows];
+  return rows.sort(
+    (left, right) => (right.windowDurationMins ?? -1) - (left.windowDurationMins ?? -1),
+  );
+}
+
+export function currentUsedPercent(window: ServerProviderUsageWindow, now: number) {
+  return windowRefilled(window, now) ? 0 : window.usedPercent;
+}
+
+export function shortQuotaCountdown(resetsAt: string | undefined, now: number) {
+  const countdown = quotaCountdown(resetsAt, now);
+  return countdown === null || countdown === "Awaiting reset"
+    ? countdown
+    : countdown.split(" ").slice(0, 2).join(" ");
 }
 
 export function quotaCountdown(resetsAt: string | undefined, now: number) {

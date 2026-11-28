@@ -13,6 +13,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
@@ -24,22 +26,26 @@ import * as UsageLimitSources from "./UsageLimitSources.ts";
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
 
-it.effect("restarts the periodic interval after a manual quota-source refresh", () =>
+it.effect("keeps quota-source refresh on the next aligned boundary after a manual refresh", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-28T12:02:00.000Z"));
     const sources = yield* UsageLimitSources.make;
     yield* sources.refresh;
-    yield* TestClock.adjust("4 minutes");
+    const first = yield* sources.current;
+    expect(Date.parse(first[0]!.checkedAt)).toBe(Date.parse("2026-11-28T12:02:00.000Z"));
+
+    yield* TestClock.adjust("2 minutes");
     yield* sources.refresh;
     const manuallyRefreshed = yield* sources.current;
     expect(manuallyRefreshed).toHaveLength(1);
+    expect(Date.parse(manuallyRefreshed[0]!.checkedAt)).toBe(
+      Date.parse("2026-11-28T12:04:00.000Z"),
+    );
 
     yield* TestClock.adjust("1 minute");
-    expect(yield* sources.current).toEqual(manuallyRefreshed);
-
-    yield* TestClock.adjust("4 minutes");
     const automaticallyRefreshed = yield* sources.current;
     expect(Date.parse(automaticallyRefreshed[0]!.checkedAt)).toBe(
-      Date.parse(manuallyRefreshed[0]!.checkedAt) + 5 * 60_000,
+      Date.parse("2026-11-28T12:05:00.000Z"),
     );
   }).pipe(
     Effect.provide([
@@ -69,6 +75,71 @@ it.effect("restarts the periodic interval after a manual quota-source refresh", 
       TestClock.layer(),
     ]),
     Effect.scoped,
+  ),
+);
+
+it.effect("catches up immediately when activity resumes after a skipped quota-source tick", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const demand = yield* Ref.make(false);
+      const activityChanges = yield* PubSub.unbounded<void>();
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          Layer.succeed(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            read: (references) => Effect.succeed(references.map(() => undefined)),
+            invalidate: () => Effect.void,
+          }),
+          ServerSettings.layerTest({
+            usageLimitSources: {
+              [UsageLimitSourceId.make("local-hub")]: {
+                kind: "cliproxy",
+                url: "https://hub.test:8317",
+                managementKey: "",
+                enabled: true,
+              },
+            },
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Ref.get(demand),
+            changes: Stream.fromPubSub(activityChanges),
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("Unexpected network request")),
+          ),
+          NodeCrypto.layer,
+          TestClock.layer(),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-28T12:00:00.000Z"));
+        const sources = yield* UsageLimitSources.make;
+        const initial = yield* sources.streamChanges.pipe(
+          Stream.filter((next) => next.length > 0),
+          Stream.runHead,
+          Effect.flatMap(Effect.fromOption),
+        );
+        expect(Date.parse(initial[0]!.checkedAt)).toBe(Date.parse("2026-11-28T12:00:00.000Z"));
+
+        yield* TestClock.adjust("5 minutes");
+        yield* Effect.yieldNow;
+        expect(yield* sources.current).toEqual(initial);
+
+        const resumed = yield* sources.streamChanges.pipe(
+          Stream.filter((next) => next[0]?.checkedAt !== initial[0]?.checkedAt),
+          Stream.runHead,
+          Effect.flatMap(Effect.fromOption),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("2 minutes");
+        yield* Ref.set(demand, true);
+        yield* PubSub.publish(activityChanges, undefined);
+        const snapshots = yield* Fiber.join(resumed);
+
+        expect(Date.parse(snapshots[0]!.checkedAt)).toBe(Date.parse("2026-11-28T12:07:00.000Z"));
+      }).pipe(Effect.provide(services));
+    }),
   ),
 );
 

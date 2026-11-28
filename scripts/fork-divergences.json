@@ -86,6 +86,18 @@
       }
     },
     {
+      "id": "usage-refill-after-reset",
+      "why": "Usage bars treat a window past its reset time as refilled instead of showing the old reading until the next check; upstream keeps the stale value.",
+      "files": {
+        "packages/shared/src/usageLimits.ts": {
+          "require": ["windowRefilled"]
+        },
+        "packages/shared/src/usageQuotaCards.ts": {
+          "require": ["windowRefilled"]
+        }
+      }
+    },
+    {
       "id": "fork-composer-slot",
       "why": "Fork-only composer bars live behind one small slot instead of edits throughout the upstream composer.",
       "files": {

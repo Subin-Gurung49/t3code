@@ -1282,6 +1282,22 @@ describe("pooled account columns", () => {
     },
   );
 
+  it("treats windows past their reset as refilled before the next reading", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [
+          window,
+          { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" },
+        ]),
+      ],
+      now,
+    );
+    const session = pool!.windows.find((row) => row.kind === "session");
+    const week = pool!.windows.find((row) => row.kind === "weekly");
+    expect(week).toMatchObject({ usedPercent: 0, pace: null, resets: [] });
+    expect(session?.usedPercent).toBe(40);
+  });
+
   it("excludes weekly-blocked sessions from the pool without changing snapshots or model allowances", () => {
     const blocked = account("blocked", [
       window,
@@ -1326,8 +1342,8 @@ describe("pooled account columns", () => {
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
   });
 
-  it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
-    "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
+  it.each([undefined, "invalid"])(
+    "keeps blocked sessions empty without predicting a refill from a missing clock (%s)",
     (resetsAt) => {
       const [pool] = collectLimitPools(
         [
