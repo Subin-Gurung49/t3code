@@ -603,6 +603,21 @@ async function verifyApk(
   return { certSha256, metadata, sha256: await sha256File(RELEASE_APK) };
 }
 
+export function uploadedReleaseAssetDigest(stdout: string, assetName: string): string | undefined {
+  const response: unknown = JSON.parse(stdout);
+  const assets =
+    typeof response === "object" && response !== null && "assets" in response
+      ? response.assets
+      : undefined;
+  if (!Array.isArray(assets)) throw new Error("GitHub returned an invalid release asset list.");
+
+  const matchingAsset = assets.find(
+    (value): value is { digest?: unknown; name?: unknown } =>
+      typeof value === "object" && value !== null && "name" in value && value.name === assetName,
+  );
+  return typeof matchingAsset?.digest === "string" ? matchingAsset.digest : undefined;
+}
+
 async function publishRelease(options: {
   readonly certSha256: string;
   readonly metadata: ApkMetadata;
@@ -651,16 +666,7 @@ async function publishRelease(options: {
       ["release", "view", tag, "--repo", options.repository, "--json", "assets"],
       { failure: `Could not verify uploaded assets for ${tag}` },
     );
-    const assets: unknown = JSON.parse(uploaded.stdout);
-    if (!Array.isArray(assets)) throw new Error("GitHub returned an invalid release asset list.");
-    const matchingAsset = assets.find(
-      (value): value is { digest?: unknown; name?: unknown } =>
-        typeof value === "object" &&
-        value !== null &&
-        "name" in value &&
-        value.name === APK_ASSET_NAME,
-    );
-    const digest = matchingAsset?.digest;
+    const digest = uploadedReleaseAssetDigest(uploaded.stdout, APK_ASSET_NAME);
     if (digest !== `sha256:${options.sha256}`) {
       throw new Error(`Uploaded ${APK_ASSET_NAME} digest does not match the built APK.`);
     }
@@ -741,7 +747,9 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  NodeProcess.exit(1);
-});
+if (import.meta.main) {
+  void main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    NodeProcess.exit(1);
+  });
+}
