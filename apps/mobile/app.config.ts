@@ -16,6 +16,12 @@ const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
+const androidVersionCode = resolveAndroidVersionCode(
+  process.env.T3CODE_MOBILE_ANDROID_VERSION_CODE ?? repoEnv.T3CODE_MOBILE_ANDROID_VERSION_CODE,
+);
+const updatesChannel = resolveUpdatesChannel(
+  process.env.T3CODE_MOBILE_UPDATES_CHANNEL ?? repoEnv.T3CODE_MOBILE_UPDATES_CHANNEL,
+);
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -116,6 +122,30 @@ function resolveAppVariant(value: string | undefined): AppVariant {
     default:
       throw new Error("APP_VARIANT must be development, preview, or production.");
   }
+}
+
+function resolveAndroidVersionCode(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!/^[1-9]\d*$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+    throw new Error("T3CODE_MOBILE_ANDROID_VERSION_CODE must be a positive integer.");
+  }
+  const versionCode = Number(trimmed);
+  if (versionCode > 2_100_000_000) {
+    throw new Error("T3CODE_MOBILE_ANDROID_VERSION_CODE must be at most 2100000000.");
+  }
+  return versionCode;
+}
+
+function resolveUpdatesChannel(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+    throw new Error(
+      "T3CODE_MOBILE_UPDATES_CHANNEL may contain only letters, digits, dots, dashes, and underscores.",
+    );
+  }
+  return trimmed;
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
@@ -258,6 +288,7 @@ const config: ExpoConfig = {
     url: `https://u.expo.dev/${easProjectId}`,
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
+    ...(updatesChannel ? { requestHeaders: { "expo-channel-name": updatesChannel } } : {}),
   },
   ios: {
     icon: variant.assets.iosIcon,
@@ -307,6 +338,7 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: repoEnv.T3CODE_MOBILE_ANDROID_PACKAGE ?? variant.androidPackage,
+    ...(androidVersionCode === undefined ? {} : { versionCode: androidVersionCode }),
     ...(APP_VARIANT === "preview"
       ? { permissions: ["android.permission.REQUEST_INSTALL_PACKAGES"] }
       : {}),

@@ -186,9 +186,8 @@ preview package installs alongside the published production app, but cannot
 coexist with another build using the preview package.
 
 Also configure the T3 Connect public values described above in the EAS `preview`
-environment. An installable APK can be built locally with
-`vp run eas:android:preview:local`; the GitHub Release flow below builds and publishes it
-from Fedora. This standalone app runs without Metro.
+environment. The GitHub Release flow below supplies that environment locally and
+builds a standalone APK without Metro.
 
 ### GitHub Release APK updates
 
@@ -203,24 +202,36 @@ the first time and asks for confirmation for each update. This is an APK update,
 silent install. The first build containing this updater must still be installed once
 manually. Reopen T3 Code after Android finishes installing the update.
 
-Build and publish a release from a clean Fedora checkout after the source commit has
-been pushed to the fork. The command builds on that machine and publishes the APK to
-the public repository's Releases; it does not use GitHub Actions or an EAS cloud build
-worker. EAS authentication is still used for the project and managed Android signing
-credentials, and `gh` authentication is used to publish the public release. The APK is
-publicly downloadable because the fork repository is public.
+Import the existing preview signing key and public preview environment once:
 
 ```bash
 cd apps/mobile
-eas login # or set EXPO_TOKEN
-gh auth login
-vp run release:android:preview
+eas credentials -p android
+# Choose the preview profile and download its credentials.json and keystore.
+eas env:pull --environment preview
+bash scripts/import-android-signing.sh
 ```
 
-The Fedora machine needs Node.js, pnpm/Corepack, EAS CLI, GitHub CLI, and Android SDK
+The import encrypts the signing key and `EXPO_PUBLIC_*` values into the
+`t3code-mobile` secret project, then removes the downloaded EAS files.
+
+Build and publish from a clean checkout after the source commit has been pushed to
+the fork:
+
+```bash
+secret exec t3code-mobile -- vp run mobile:release:android
+```
+
+The release script increments `versionCode` from the highest published
+`android-preview-N` tag, prebuilds Android incrementally, runs
+`./gradlew app:assembleRelease`, verifies the package, version, signature, certificate,
+zip integrity, and updates channel, then publishes `t3-code-preview.apk` to the public
+GitHub Release. Use `--no-publish` for a local signed build, or
+`--version-code N` to override the next number.
+
+The build host needs Node.js, pnpm/Corepack, GitHub CLI, a JDK, and Android SDK
 build-tools. Keep the Android package and signing key unchanged so Android accepts
-each APK as an update. The `preview` EAS profile increments its Android `versionCode`;
-the release script uses that code for the `android-preview-<versionCode>` tag.
+each APK as an update.
 
 The existing EAS Update channel remains available for JavaScript-only changes. Native
 changes, including this updater and microphone permissions, need a new APK release.

@@ -24,7 +24,6 @@
     "eas:android:dev": "eas build --profile development -p android",
     "eas:android:preview": "eas build --profile preview -p android",
     "eas:android:preview:local": "eas build --profile preview -p android --local",
-    "release:android:preview": "bash scripts/publish-android-preview-release.sh",
     "update:android:preview": "APP_VARIANT=preview eas update --channel preview --platform android --environment preview",
     "eas:android:preview:dev": "eas build --profile preview:dev -p android",
     "eas:android:prod": "eas build --profile production -p android",

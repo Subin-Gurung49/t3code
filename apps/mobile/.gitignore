@@ -33,6 +33,10 @@ yarn-error.*
 # local env files
 .env*.local
 
+# EAS signing downloads (moved into the encrypted secrets store, then deleted)
+/credentials.json
+/credentials/
+
 # typescript
 *.tsbuildinfo
 

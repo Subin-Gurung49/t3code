@@ -42,6 +42,7 @@
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "mobile:install": "node scripts/mobile-native-client.ts ensure",
+    "mobile:release:android": "node scripts/mobile-android-release.ts",
     "mobile:audit": "node scripts/mobile-audit.ts",
     "mobile:behavior": "node scripts/mobile-behavior.ts",
     "mobile:metrics": "node scripts/metrics/mobile/mobile-metrics.ts",
