@@ -33,6 +33,7 @@ import {
   type ThreadId,
   isRuntimeModeAbove,
   type TurnTokenUsage,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { parseGrepOutput } from "@t3tools/shared/grepOutput";
@@ -448,6 +449,11 @@ export interface AcpAdapterV2Flavor {
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly promptSuggestion?: (input: {
+    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+    readonly sourceSessionId: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
   /** The flavor's runtime refuses a version the policy rates broken when it starts. */
   readonly checksVersionAtHandshake?: boolean;
   /**
@@ -932,6 +938,9 @@ export interface AcpAdapterV2Options {
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterPromptCallback?: () => Effect.Effect<void>;
+    readonly onPromptSuggestionSettled?: (
+      outcome: "skipped" | "empty" | "emitted" | "failed",
+    ) => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
       readonly requestId?: string;
@@ -1824,6 +1833,7 @@ interface ActiveAcpTurn {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
+  readonly isContinuationTurn: boolean;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
   readonly itemOrdinals: Map<string, number>;
@@ -2489,6 +2499,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        const testHooks = options.testHooks;
+        let promptSuggestionFiber: Fiber.Fiber<void> | undefined;
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);
@@ -8012,6 +8025,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
+              if (yield* runtime.isDetachedSession(rawNotification.sessionId)) return;
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
               // Replayed history feeds snapshots only; it must not drive live turn or wake state.
               if (sessionUpdateIsReplay(rawNotification)) {
@@ -8276,6 +8290,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
+              if (yield* targetRuntime.isDetachedSession(nativeParams.sessionId)) {
+                return { outcome: { outcome: "cancelled" } } as const;
+              }
               if (
                 postSettleContinuationEnabled &&
                 flavor.wakeOnDetachedRequest &&
@@ -9594,6 +9611,63 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
 
+        const stopPromptSuggestion = Effect.fnUntraced(function* () {
+          const fiber = promptSuggestionFiber;
+          promptSuggestionFiber = undefined;
+          // Detached: the fork's cancel/close cleanup must not delay the turn that superseded it.
+          if (fiber !== undefined) yield* Effect.forkDetach(Fiber.interrupt(fiber));
+        });
+
+        const samplePromptSuggestion = Effect.fn("AcpAdapterV2.samplePromptSuggestion")(
+          function* (context: ActiveAcpTurn) {
+            if (
+              context.isContinuationTurn ||
+              isDelegatedAppThread(context.input.appThread) ||
+              context.providerRetry?.failure.class === "usage_limit" ||
+              !(yield* promptSuggestionsEnabled)
+            ) {
+              return "skipped" as const;
+            }
+            const suggestionModelSelection =
+              input.promptSuggestionModelSelection === undefined
+                ? null
+                : yield* input.promptSuggestionModelSelection;
+            const text =
+              suggestionModelSelection === null
+                ? flavor.promptSuggestion === undefined
+                  ? undefined
+                  : yield* flavor.promptSuggestion({
+                      runtime,
+                      sourceSessionId: context.nativeThreadId,
+                      modelSelection: context.input.modelSelection,
+                    })
+                : input.generatePromptSuggestion === undefined
+                  ? undefined
+                  : yield* input.generatePromptSuggestion({
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                    });
+            const suggestion = text?.trim() ?? "";
+            if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) {
+              return "empty" as const;
+            }
+            yield* emitProviderEvent({
+              type: "prompt_suggestion.updated",
+              driver,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              text: suggestion,
+            });
+            return "emitted" as const;
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.acp-prompt-suggestion-failed", {
+              driver,
+              cause,
+            }).pipe(Effect.as("failed" as const)),
+          ),
+        );
+
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
@@ -9774,6 +9848,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   threadDisposition,
                 },
           );
+          if (settledStatus === "completed" && !directStopQuarantine) {
+            promptSuggestionFiber = yield* samplePromptSuggestion(context).pipe(
+              Effect.tap(
+                (outcome) => testHooks?.onPromptSuggestionSettled?.(outcome) ?? Effect.void,
+              ),
+              Effect.asVoid,
+              Effect.forkIn(sessionScope),
+            );
+          }
           const subagentsRequiringCarryover = [...context.subagents.values()].filter(
             acpSubagentHasPendingBackgroundWork,
           );
@@ -10486,6 +10569,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            yield* stopPromptSuggestion();
             yield* awaitRuntimeTeardown();
             const existing = yield* Ref.get(activeTurn);
             if (existing !== null) {
@@ -10629,6 +10713,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               providerTurnId,
               nativeThreadId: requestedSessionId,
               nativeTurnId,
+              isContinuationTurn: isContinuationTurn || isAppOwnedWakeTurn,
               startedAt,
               completed,
               itemOrdinals: new Map(),
@@ -11053,6 +11138,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            yield* stopPromptSuggestion();
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.set(continuationClosed, true);

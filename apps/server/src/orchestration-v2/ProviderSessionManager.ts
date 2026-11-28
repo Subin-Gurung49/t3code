@@ -77,6 +77,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadPromptSuggestionService from "./ThreadPromptSuggestionService.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 // Without native resume, a released session comes back as a summary of the thread, so it stays longer.
@@ -478,6 +479,9 @@ export const layerWithOptions = (
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      const promptSuggestionService = yield* Effect.serviceOption(
+        ThreadPromptSuggestionService.ThreadPromptSuggestionService,
+      );
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
@@ -3315,6 +3319,13 @@ export const layerWithOptions = (
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                     promptSuggestions: promptSuggestionsEnabled,
+                    ...(adapter.driver === "antigravity" && Option.isSome(promptSuggestionService)
+                      ? {
+                          promptSuggestionModelSelection:
+                            promptSuggestionService.value.modelSelection,
+                          generatePromptSuggestion: promptSuggestionService.value.generate,
+                        }
+                      : {}),
                     ...(input.resumeFromSession === undefined
                       ? {}
                       : { resumeFromSession: input.resumeFromSession }),

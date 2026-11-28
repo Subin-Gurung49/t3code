@@ -43,6 +43,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { PROMPT_SUGGESTION_PROMPT } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -59,6 +60,7 @@ import {
 } from "@t3tools/provider-testing/replayGate";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
+const SUGGESTION_FORK = "ses_suggestion_fork";
 const WORK = "/work/opencode2";
 const instanceId = ProviderInstanceId.make("opencode");
 const threadId = ThreadId.make("thread:opencode2-adapter");
@@ -201,7 +203,10 @@ const withInstructions = (
 
 const openCode2ReplayRuntimeWithInstructions = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean },
+  options?: {
+    readonly external?: boolean;
+    readonly promptSuggestions?: Effect.Effect<boolean>;
+  },
 ) => openCode2ReplayRuntime(withInstructions(entries), options);
 
 const opening: ReadonlyArray<ProviderReplayEntry> = [
@@ -344,6 +349,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly promptSuggestions?: Effect.Effect<boolean>;
   },
 ) =>
   Effect.gen(function* () {
@@ -381,6 +387,9 @@ const resumed = (
         ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.promptSuggestions === undefined
+          ? {}
+          : { promptSuggestions: options.promptSuggestions }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.processExit === undefined ? {} : { processExit: options.processExit }),
         ...(options?.beforeResponse === undefined
@@ -511,6 +520,206 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("emits an OpenCode 2 suggestion from a temporary native fork", () =>
+    Effect.gen(function* () {
+      const prompts: Array<Record<string, unknown>> = [];
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.fork", { sessionID: SESSION }),
+          replyData("session.fork", sessionInfo({ id: SUGGESTION_FORK })),
+          event("session.created", {
+            sessionID: SUGGESTION_FORK,
+            slug: "suggestion-fork",
+            version: "2.0.18",
+            projectID: "global",
+            parentID: SESSION,
+            location: { directory: WORK },
+            subpath: "",
+            title: "Suggestion",
+            agent: "build",
+            model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          }),
+          out("session.update", {
+            sessionID: SUGGESTION_FORK,
+            permissions: [{ action: "*", resource: "*", effect: "deny" }],
+          }),
+          reply("session.update", null),
+          out("session.switchModel", {
+            sessionID: SUGGESTION_FORK,
+            model: { providerID: "opencode", id: "big-pickle" },
+          }),
+          reply("session.switchModel", null),
+          out("session.prompt", {
+            sessionID: SUGGESTION_FORK,
+            text: PROMPT_SUGGESTION_PROMPT,
+          }),
+          replyData("session.prompt", {
+            id: "msg_suggestion_user",
+            sessionID: SUGGESTION_FORK,
+            time: { created: 2 },
+            type: "user",
+            payload: { text: PROMPT_SUGGESTION_PROMPT },
+            delivery: "steer",
+          }),
+          out("session.wait", { sessionID: SUGGESTION_FORK }),
+          reply("session.wait", null),
+          out("message.list", {
+            sessionID: SUGGESTION_FORK,
+            order: "desc",
+            limit: "1",
+            type: "assistant",
+          }),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_suggestion_assistant",
+                time: { created: 3, streamed: 4, completed: 5 },
+                type: "assistant",
+                agent: "build",
+                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                content: [{ type: "text", text: "  add tests for subtract\n" }],
+                finish: "stop",
+                cost: 0,
+                tokens: {
+                  input: 10,
+                  output: 4,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+              },
+            ],
+            cursor: {},
+          }),
+          out("session.remove", { sessionID: SUGGESTION_FORK }),
+          reply("session.remove", null),
+        ],
+        {
+          promptSuggestions: Effect.succeed(true),
+          onPrompt: (input) => prompts.push(input as Record<string, unknown>),
+        },
+      );
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "prompt_suggestion.updated"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const events = yield* Fiber.join(collected);
+      assert.deepEqual(
+        events.find((event) => event.type === "prompt_suggestion.updated"),
+        {
+          type: "prompt_suggestion.updated",
+          driver: OPENCODE_PROVIDER,
+          threadId,
+          runId: RunId.make("run:opencode2-adapter"),
+          text: "add tests for subtract",
+        },
+      );
+      assert.deepEqual(prompts.at(-1), {
+        sessionID: SUGGESTION_FORK,
+        text: PROMPT_SUGGESTION_PROMPT,
+      });
+      assert.notInclude(JSON.stringify(events), SUGGESTION_FORK);
+    }),
+  );
+
+  it.effect("deletes the OpenCode 2 suggestion fork after a failed sample", () =>
+    Effect.gen(function* () {
+      const removed = yield* Deferred.make<void>();
+      // The fork's permission update and its removal share a path; the second response is the removal.
+      let forkResponses = 0;
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.fork", { sessionID: SESSION }),
+          replyData("session.fork", sessionInfo({ id: SUGGESTION_FORK })),
+          out("session.update", {
+            sessionID: SUGGESTION_FORK,
+            permissions: [{ action: "*", resource: "*", effect: "deny" }],
+          }),
+          reply("session.update", null),
+          out("session.switchModel", {
+            sessionID: SUGGESTION_FORK,
+            model: { providerID: "opencode", id: "big-pickle" },
+          }),
+          reply("session.switchModel", null),
+          out("session.prompt", { sessionID: SUGGESTION_FORK, text: "<any>" }),
+          reply("session.prompt", { status: 500, body: { message: "sample failed" } }),
+          out("session.interrupt", { sessionID: SUGGESTION_FORK }),
+          reply("session.interrupt", { interrupted: true }),
+          out("session.remove", { sessionID: SUGGESTION_FORK }),
+          reply("session.remove", null),
+        ],
+        {
+          promptSuggestions: Effect.succeed(true),
+          beforeResponse: (path) =>
+            path === `/api/session/${SUGGESTION_FORK}` && ++forkResponses === 2
+              ? Deferred.succeed(removed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* Deferred.await(removed);
+    }),
+  );
+
+  it.effect.each([
+    { name: "disabled", enabled: false, ending: "completed", delegated: false },
+    { name: "delegated", enabled: true, ending: "completed", delegated: true },
+    { name: "failed", enabled: true, ending: "failed", delegated: false },
+    { name: "interrupted", enabled: true, ending: "interrupted", delegated: false },
+  ] as const)("does not sample an OpenCode 2 suggestion when $name", (sample) =>
+    Effect.gen(function* () {
+      const flagRead = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          sample.ending === "failed"
+            ? event("session.execution.failed", {
+                sessionID: SESSION,
+                error: { type: "provider", message: "failed" },
+              })
+            : sample.ending === "interrupted"
+              ? event("session.execution.interrupted", { sessionID: SESSION })
+              : event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        {
+          promptSuggestions: Effect.suspend(() => Deferred.succeed(flagRead, undefined)).pipe(
+            Effect.as(sample.enabled),
+          ),
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        ...(sample.delegated
+          ? {
+              appThread: {
+                ...turnInput(thread).appThread,
+                lineage: {
+                  parentThreadId: ThreadId.make("thread:opencode2-suggestion-parent"),
+                  relationshipToParent: "subagent" as const,
+                  rootThreadId: ThreadId.make("thread:opencode2-suggestion-parent"),
+                },
+              },
+            }
+          : {}),
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, sample.ending);
+      if (sample.ending === "completed" && !sample.delegated) {
+        yield* Deferred.await(flagRead);
+      }
     }),
   );
 

@@ -12,6 +12,7 @@ import {
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildPromptPolishPrompt,
+  buildPromptSuggestionPrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -219,6 +220,20 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     };
   });
 
+  const generatePromptSuggestion: ProviderTextGeneration["generatePromptSuggestion"] = Effect.fn(
+    `${name}.generatePromptSuggestion`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generatePromptSuggestion",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildPromptSuggestionPrompt({ threadContext: input.threadContext }),
+    });
+    return {
+      suggestion: generated.suggestion.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -226,6 +241,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateThreadTitle,
     generateReviewGuide,
     generatePromptPolish,
+    generatePromptSuggestion,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 }

@@ -30,6 +30,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type PlanId,
+  isDelegatedAppThread,
   ProviderDriverKind,
   ProviderSetupError,
   type ProviderInstanceId,
@@ -66,7 +67,10 @@ import {
   summarizeNativeProtocolPayload,
 } from "@t3tools/provider-core/server/nativeProtocolLogging";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  PROMPT_SUGGESTION_PROMPT,
+  t3OrchestrationSystemPrompt,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
@@ -291,6 +295,7 @@ function openCodeContextUsage(
 interface ActiveOpenCodeTurn {
   readonly usage: OpenCodeTurnTokenUsageAccumulator;
   readonly isRoot: boolean;
+  readonly isContinuation: boolean;
   readonly threadId: ThreadId;
   readonly runId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | null;
   readonly rootNodeId: ProviderAdapter.ProviderAdapterV2TurnInput["rootNodeId"];
@@ -438,6 +443,8 @@ interface OpenCodeThreadState {
   permission: PermissionRuleset;
   /** Parent rules last written into this child's `permission`; empty for root sessions. */
   inheritedPermission: PermissionRuleset;
+  promptSuggestionFiber: Fiber.Fiber<void, never> | null;
+  promptSuggestionGeneration: number;
 }
 
 interface OpenCodeRequestOwner {
@@ -964,6 +971,17 @@ function sessionWorkEventSessionId(event: OpenCodeEvent): string | undefined {
   }
 }
 
+function openCodeEventSessionId(event: OpenCodeEvent): string | undefined {
+  switch (event.type) {
+    case "session.created":
+    case "session.updated":
+    case "session.deleted":
+      return event.properties.info.id;
+    default:
+      return sessionWorkEventSessionId(event);
+  }
+}
+
 function isMessageAbortedError(event: Extract<OpenCodeEvent, { type: "session.error" }>): boolean {
   return event.properties.error?.name === "MessageAbortedError";
 }
@@ -1156,6 +1174,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         let hasConnected = false;
         // Orders native events with turn installation, so a held wake replays before later events.
         const eventPermit = Semaphore.makeUnsafe(1);
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        // Suggestion forks are native work, but never part of the T3 thread projection.
+        const ignoredSessionIds = new Set<string>();
+        // A fork's session.created can arrive before session.fork returns its id.
+        const forkingSessionIds = new Set<string>();
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -1598,6 +1621,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               lifecyclePermit: Semaphore.makeUnsafe(1),
               permission: childPermission,
               inheritedPermission: openCodePermissionRules(turn.runtimePolicy),
+              promptSuggestionFiber: null,
+              promptSuggestionGeneration: 0,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -2263,6 +2288,98 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
+        const forgetPromptSuggestionFork = (sessionId: string) =>
+          sdkCall("session.delete", { sessionID: sessionId }, (signal) =>
+            client.session.delete({ sessionID: sessionId }, { signal }),
+          ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Debug" }));
+
+        const abortPromptSuggestionFork = (sessionId: string) =>
+          sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+            client.session.abort({ sessionID: sessionId }, { signal }),
+          ).pipe(Effect.timeout("2 seconds"), Effect.ignore({ log: "Debug" }));
+
+        const interruptPromptSuggestion = Effect.fnUntraced(function* (state: OpenCodeThreadState) {
+          state.promptSuggestionGeneration += 1;
+          const fiber = state.promptSuggestionFiber;
+          state.promptSuggestionFiber = null;
+          if (fiber !== null) yield* Fiber.interrupt(fiber).pipe(Effect.ignore);
+        });
+
+        const samplePromptSuggestion = Effect.fn("OpencodeAdapter.samplePromptSuggestion")(
+          function* (state: OpenCodeThreadState, turn: ActiveOpenCodeTurn, generation: number) {
+            const runId = turn.runId;
+            const enabled = yield* promptSuggestionsEnabled;
+            if (
+              !enabled ||
+              !turn.isRoot ||
+              turn.isContinuation ||
+              runId === null ||
+              isDelegatedAppThread(turn.appThread) ||
+              state.promptSuggestionGeneration !== generation
+            ) {
+              return;
+            }
+            const model = OpenCodeRuntime.parseOpenCodeModelSlug(turn.modelSelection.model);
+            if (model === null) return;
+            const catalog = yield* OpenCodeRuntime.readOpenCodeCatalogModel(
+              client,
+              model,
+              undefined,
+              variantCache,
+            );
+            const variant = OpenCodeRuntime.lowestOpenCodeVariant(catalog?.variants ?? []);
+            forkingSessionIds.add(state.nativeSessionId);
+            const fork = unwrapData(
+              "session.fork",
+              yield* sdkCall("session.fork", { sessionID: state.nativeSessionId }, () =>
+                client.session.fork({ sessionID: state.nativeSessionId }),
+              ).pipe(
+                Effect.ensuring(Effect.sync(() => forkingSessionIds.delete(state.nativeSessionId))),
+              ),
+            );
+            ignoredSessionIds.add(fork.id);
+            if (ignoredSessionIds.size > 128) {
+              ignoredSessionIds.delete(ignoredSessionIds.values().next().value!);
+            }
+            yield* Effect.gen(function* () {
+              const promptId = yield* makeOpenCodeMessageId(messageIdClock);
+              const payload = {
+                sessionID: fork.id,
+                messageID: promptId,
+                parts: [{ type: "text" as const, text: PROMPT_SUGGESTION_PROMPT }],
+                // The fork inherits the thread's permissions, so tools are switched off outright.
+                tools: { "*": false },
+                ...(catalog === undefined ? {} : { model }),
+                ...(variant === undefined ? {} : { variant }),
+              };
+              const response = yield* sdkCall("session.prompt", payload, (signal) =>
+                client.session.prompt(payload, { signal }),
+              );
+              const suggestion = (response.data?.parts ?? [])
+                .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                .join("")
+                .trim();
+              if (suggestion.length === 0 || state.promptSuggestionGeneration !== generation) {
+                return;
+              }
+              yield* emitProviderEvent({
+                type: "prompt_suggestion.updated",
+                driver: OPENCODE_PROVIDER,
+                threadId: turn.threadId,
+                runId,
+                text: suggestion,
+              });
+            }).pipe(
+              Effect.timeout("2 minutes"),
+              Effect.onError(() => abortPromptSuggestionFork(fork.id)),
+              Effect.ensuring(forgetPromptSuggestionFork(fork.id)),
+            );
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("opencode-prompt-suggestion-failed", { cause }),
+          ),
+        );
+
         const finalizeTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -2391,6 +2508,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       threadDisposition,
                     },
               );
+              if (
+                status === "completed" &&
+                turn.isRoot &&
+                !turn.isContinuation &&
+                !isDelegatedAppThread(turn.appThread) &&
+                nativeStreamFailure === null
+              ) {
+                const generation = ++state.promptSuggestionGeneration;
+                state.promptSuggestionFiber = yield* samplePromptSuggestion(
+                  state,
+                  turn,
+                  generation,
+                ).pipe(Effect.forkIn(scope));
+              }
             }),
           );
         });
@@ -2515,6 +2646,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           };
           const turn: ActiveOpenCodeTurn = {
             isRoot: false,
+            isContinuation: true,
             threadId: state.appThread.id,
             runId: null,
             rootNodeId,
@@ -2912,6 +3044,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // Callers hold eventPermit. A root user message with no T3 turn starts a wake; its work stays
         // held, with that of children no turn has claimed yet, until startTurn takes it.
         const acceptEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+          const eventSessionId = openCodeEventSessionId(event);
+          if (eventSessionId !== undefined && ignoredSessionIds.has(eventSessionId)) return;
           const sessionId = sessionWorkEventSessionId(event);
           const owner =
             sessionId === undefined
@@ -3092,6 +3226,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             case "session.created":
             case "session.updated": {
               const info = event.properties.info;
+              if (info.parentID !== undefined && forkingSessionIds.has(info.parentID)) {
+                ignoredSessionIds.add(info.id);
+                return;
+              }
               if (event.type === "session.created" && info.parentID !== undefined) {
                 unstartedSessionIds.add(info.id);
               }
@@ -3384,6 +3522,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             lifecyclePermit: Semaphore.makeUnsafe(1),
             permission: nativeSession.permission ?? [],
             inheritedPermission: parentSubagent?.parentState.permission ?? [],
+            promptSuggestionFiber: null,
+            promptSuggestionGeneration: 0,
           };
           threads.set(nativeSession.id, state);
           return state;
@@ -3777,6 +3917,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   reason: "previous_turn_active",
                 });
               }
+              yield* interruptPromptSuggestion(state);
               const continuation =
                 turnInput.message.createdBy === "agent" &&
                 turnInput.message.creationSource === "provider";
@@ -3818,6 +3959,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 : yield* makeOpenCodeMessageId(messageIdClock);
               const turn: ActiveOpenCodeTurn = {
                 isRoot: true,
+                isContinuation: continuation,
                 threadId: turnInput.threadId,
                 runId: turnInput.runId,
                 rootNodeId: turnInput.rootNodeId,

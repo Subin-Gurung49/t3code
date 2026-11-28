@@ -288,6 +288,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateReviewGuide", nativeGeneration.generateReviewGuide(value)),
     generatePromptPolish: (value) =>
       protect("generatePromptPolish", nativeGeneration.generatePromptPolish(value)),
+    generatePromptSuggestion: (value) =>
+      protect("generatePromptSuggestion", nativeGeneration.generatePromptSuggestion(value)),
     generateTranscriptionPostProcessing: (value) =>
       protect(
         "generateTranscriptionPostProcessing",

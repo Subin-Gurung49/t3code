@@ -396,6 +396,13 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
   const generatePromptPolish: ProviderTextGeneration["generatePromptPolish"] = () =>
     Effect.fail(investigationUnsupported("generatePromptPolish", "Muse Code"));
+  const generatePromptSuggestion: ProviderTextGeneration["generatePromptSuggestion"] = () =>
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generatePromptSuggestion",
+        detail: "Muse Code does not provide prompt suggestions.",
+      }),
+    );
   return {
     generateCommitMessage,
     generatePrContent,
@@ -403,6 +410,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateThreadTitle,
     generateReviewGuide,
     generatePromptPolish,
+    generatePromptSuggestion,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 });

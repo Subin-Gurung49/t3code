@@ -128,6 +128,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
    */
   effortColumn?: ReactNode;
   footer?: ReactNode;
+  defaultOption?: {
+    readonly label: string;
+    readonly selected: boolean;
+    readonly disabled?: boolean;
+    readonly onSelect: () => void;
+  };
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -319,6 +325,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       onInstanceModelChange={handleInstanceModelChange}
+      {...(props.defaultOption ? { defaultOption: props.defaultOption } : {})}
       {...(docked
         ? {
             docked,

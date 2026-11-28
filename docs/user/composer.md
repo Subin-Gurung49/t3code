@@ -88,12 +88,14 @@ Press `ArrowUp` in an empty composer to cycle backward through earlier prompts i
 
 ## Suggested next prompt
 
-Enable **Settings → Labs → Suggest next prompt** (web, desktop, and mobile) to show a predicted next message in the empty composer after a Claude or Codex turn completes.
+Enable **Settings → Labs → Suggest next prompt** (web, desktop, and mobile) to show a predicted next message in the empty composer after a Claude, Codex, OpenCode, or Antigravity turn completes.
 
 - On web and desktop, press `Tab` to accept or `Escape` to dismiss.
 - On mobile, tap the suggestion chip above the composer to accept, or tap `×` to dismiss.
 - Each suggestion uses one cached request against your plan's usage. Claude skips suggestions on the first turn and near usage limits.
 - Codex requires CLI version 0.165+ (update in **Settings → Providers**). Open Claude threads pick up the setting after restarting.
+- OpenCode suggestions use the thread's own model. Antigravity uses its own session fork by default, so it skips when its agent does not support forking or after a usage-limit stop.
+- To keep Antigravity suggestions off its quota, choose a text-generation model in **Antigravity suggestion model** under the same Labs section. Leaving it on **Antigravity (thread's model)** uses the agent's own model.
 
 ## Edit an earlier prompt
 

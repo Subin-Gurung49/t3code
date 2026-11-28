@@ -571,6 +571,12 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /** Labs flag, read live: emit `prompt_suggestion.updated` after completed turns, where the provider can. */
   readonly promptSuggestions?: Effect.Effect<boolean>;
+  /** Overrides the provider's own suggestion path when the user picked another text model. */
+  readonly promptSuggestionModelSelection?: Effect.Effect<ModelSelection | null>;
+  readonly generatePromptSuggestion?: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+  }) => Effect.Effect<string | undefined>;
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
   readonly initialNativeThreadId?: string;
   readonly initialProviderItemIdentityVersion?: 2;

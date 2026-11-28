@@ -10,6 +10,7 @@ import {
 import { T, useGT, useMessages } from "gt-react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { AntigravityPromptSuggestionModelRow } from "./AntigravityPromptSuggestionModelRow";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -45,6 +46,7 @@ export function LabsSettingsPanel() {
         <WorkflowsRow />
         <WorkflowSkippedRunsRow />
         <PromptSuggestionsRow />
+        <AntigravityPromptSuggestionModelRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
         <AgentFeedbackRow />
@@ -300,7 +302,7 @@ function PromptSuggestionsRow() {
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
       description={gt(
-        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+        "Show a predicted next message in the empty composer after a Claude, Codex, OpenCode, or Antigravity turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
       )}
       control={
         <ScopedSwitch

@@ -1539,6 +1539,10 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Null keeps Antigravity's own session fork. A model uses text generation instead. */
+  antigravityPromptSuggestionModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1980,6 +1984,7 @@ export const ServerSettingsPatch = Schema.Struct({
   workflowsEnabled: Schema.optionalKey(Schema.Boolean),
   workflowSkippedRunsKept: Schema.optionalKey(WorkflowSkippedRunsKept),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
+  antigravityPromptSuggestionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

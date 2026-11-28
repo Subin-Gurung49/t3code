@@ -331,6 +331,7 @@ function createTextGeneration(
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
     generatePromptPolish: (input) => Effect.succeed({ polished: input.draft }),
+    generatePromptSuggestion: () => Effect.succeed({ suggestion: "Continue with tests" }),
     generateTranscriptionPostProcessing: () =>
       Effect.succeed({ transcription: "processed transcript" }),
     ...overrides,
@@ -383,6 +384,7 @@ function createTextGeneration(
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
     generatePromptPolish: (input) => implementation.generatePromptPolish(input),
+    generatePromptSuggestion: (input) => implementation.generatePromptSuggestion(input),
     generateTranscriptionPostProcessing: (input) =>
       implementation.generateTranscriptionPostProcessing(input),
   };

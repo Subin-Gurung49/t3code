@@ -96,6 +96,11 @@ describe("searchSettings", () => {
       to: "/settings/threads",
       scope: "environment-defaults",
     });
+    expect(searchSettings("antigravity suggestion model")[0]).toMatchObject({
+      id: "antigravity-suggestion-model",
+      to: "/settings/labs",
+      scope: "environment",
+    });
   });
 
   it("ranks a setting by its displayed title in the active language", () => {

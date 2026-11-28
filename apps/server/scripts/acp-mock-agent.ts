@@ -110,9 +110,14 @@ const openCompactionPromptOrdinals = new Set(
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const forkPromptText = process.env.T3_ACP_FORK_PROMPT_TEXT;
+const forkPromptToolCall = process.env.T3_ACP_FORK_PROMPT_TOOL_CALL === "1";
+const forkPromptPermission = process.env.T3_ACP_FORK_PROMPT_PERMISSION === "1";
+const forkPromptFail = process.env.T3_ACP_FORK_PROMPT_FAIL === "1";
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const terminalOutputBytes = Number(process.env.T3_ACP_EMIT_TERMINAL_OUTPUT_BYTES ?? "0");
 const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
+const supportsSessionClose = process.env.T3_ACP_SESSION_CLOSE === "1";
 const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
 const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
@@ -596,6 +601,7 @@ const program = Effect.gen(function* () {
         capabilities: {
           session: {
             ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
+            ...(supportsSessionClose ? { close: {} } : {}),
             ...(supportsV2Management ? { delete: {} } : {}),
             ...(supportsAcpMcp || supportsHttpMcp
               ? {
@@ -976,6 +982,49 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (requestedSessionId.endsWith("-fork")) {
+        if (forkPromptToolCall) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "fork-tool-call",
+              title: "Read hidden context",
+              kind: "read",
+              status: "pending",
+            },
+          });
+        }
+        if (forkPromptPermission) {
+          yield* agent.client.requestPermission({
+            sessionId: requestedSessionId,
+            title: "Read hidden context",
+            subject: {
+              type: "tool_call",
+              toolCall: {
+                toolCallId: "fork-permission",
+                title: "Read hidden context",
+                kind: "read",
+              },
+            },
+            options: [
+              { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+              { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+            ],
+          });
+        }
+        if (forkPromptFail) {
+          return yield* AcpError.AcpRequestError.internalError("fork prompt failed");
+        }
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: forkPromptText ?? "follow up on the last change" },
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
       if (rejectPromptUntilLoaded && sessionsLoading.has(requestedSessionId)) {
         return yield* new AcpError.AcpRequestError({
           code: -32002,

@@ -119,6 +119,16 @@ export interface PromptPolishGenerationResult {
   polished: string;
 }
 
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  threadContext: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptSuggestionGenerationResult {
+  suggestion: string;
+}
+
 export interface TranscriptionPostProcessingInput {
   cwd: string;
   prompt: string;
@@ -157,4 +167,8 @@ export interface ProviderTextGeneration {
   readonly generatePromptPolish: (
     input: PromptPolishGenerationInput,
   ) => Effect.Effect<PromptPolishGenerationResult, TextGenerationError>;
+
+  readonly generatePromptSuggestion: (
+    input: PromptSuggestionGenerationInput,
+  ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
 }

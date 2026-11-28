@@ -33,6 +33,8 @@ export type {
   ReviewGuideGenerationResult,
   PromptPolishGenerationInput,
   PromptPolishGenerationResult,
+  PromptSuggestionGenerationInput,
+  PromptSuggestionGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
   TranscriptionPostProcessingInput,
@@ -50,9 +52,12 @@ type TextGenerationOp =
   | "generateThreadTitle"
   | "generateReviewGuide"
   | "generatePromptPolish"
+  | "generatePromptSuggestion"
   | "generateTranscriptionPostProcessing";
 
-const SAFE_POLISH_DRIVERS = new Set(["codex", "opencode"]);
+const SAFE_PROMPT_TEXT_DRIVERS = new Set(["codex", "opencode"]);
+const promptTextOperation = (operation: TextGenerationOp) =>
+  operation === "generatePromptPolish" || operation === "generatePromptSuggestion";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -69,14 +74,15 @@ const resolveInstance = (
           }),
         );
       }
-      if (operation === "generatePromptPolish" && !SAFE_POLISH_DRIVERS.has(instance.driverKind)) {
+      if (promptTextOperation(operation) && !SAFE_PROMPT_TEXT_DRIVERS.has(instance.driverKind)) {
+        const label = operation === "generatePromptPolish" ? "prompt polish" : "prompt suggestion";
         return Effect.fail(
           new TextGenerationError({
             operation,
             detail:
               "Provider driver '" +
               instance.driverKind +
-              "' is not supported for prompt polish because safe isolation cannot be guaranteed.",
+              `' is not supported for ${label} because safe isolation cannot be guaranteed.`,
           }),
         );
       }
@@ -230,6 +236,15 @@ export const make = Effect.gen(function* () {
         input.modelSelection.instanceId,
       ).pipe(Effect.flatMap((textGeneration) => textGeneration.generatePromptPolish(input)));
     }),
+    generatePromptSuggestion: Effect.fn("TextGeneration.generatePromptSuggestion")(
+      function (input) {
+        return resolveInstance(
+          registry,
+          "generatePromptSuggestion",
+          input.modelSelection.instanceId,
+        ).pipe(Effect.flatMap((textGeneration) => textGeneration.generatePromptSuggestion(input)));
+      },
+    ),
     generateTranscriptionPostProcessing: Effect.fn(
       "TextGeneration.generateTranscriptionPostProcessing",
     )(function (input) {

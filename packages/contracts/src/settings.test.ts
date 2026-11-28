@@ -55,6 +55,24 @@ it("drops theme defaults from a client's settings patch", () => {
   ).toEqual({ newWorktreesStartFromOrigin: false });
 });
 
+describe("Antigravity prompt suggestion model", () => {
+  const selection = {
+    instanceId: ProviderInstanceId.make("opencode"),
+    model: "opencode-go/deepseek-v4.1-flash",
+  };
+
+  it("defaults to Antigravity's own suggestion path and round-trips a selected model", () => {
+    expect(decodeServerSettings({}).antigravityPromptSuggestionModelSelection).toBeNull();
+    expect(
+      decodeServerSettings({ antigravityPromptSuggestionModelSelection: selection })
+        .antigravityPromptSuggestionModelSelection,
+    ).toEqual(selection);
+    expect(
+      decodeServerSettingsPatch({ antigravityPromptSuggestionModelSelection: selection }),
+    ).toEqual({ antigravityPromptSuggestionModelSelection: selection });
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

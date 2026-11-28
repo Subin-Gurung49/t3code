@@ -670,6 +670,12 @@ export function applyServerSettingsPatch(
     ...(patch.promptPolishModelSelection !== undefined
       ? { promptPolishModelSelection: patch.promptPolishModelSelection }
       : {}),
+    ...(patch.antigravityPromptSuggestionModelSelection !== undefined
+      ? {
+          antigravityPromptSuggestionModelSelection:
+            patch.antigravityPromptSuggestionModelSelection,
+        }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

@@ -19,6 +19,7 @@ import * as Shell from "@opencode/schema/shell";
 import { Mcp } from "@opencode/schema/mcp";
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
   parseGoalCommand,
   type ChatAttachment,
@@ -69,7 +70,10 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  PROMPT_SUGGESTION_PROMPT,
+  t3OrchestrationSystemPrompt,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import {
@@ -241,6 +245,7 @@ interface TurnOwner {
 
 interface ActiveTurn {
   readonly input: TurnOwner;
+  readonly continuation: boolean;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly texts: Map<string, OpenBlock>;
   /** The last assistant text this turn completed. */
@@ -399,6 +404,8 @@ interface ThreadState {
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
+  promptSuggestionFiber: Fiber.Fiber<void, never> | null;
+  promptSuggestionGeneration: number;
 }
 
 type TurnTerminal =
@@ -914,6 +921,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
+    const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+    // A suggestion fork is native work, but not a T3 thread, child, or subagent.
+    const ignoredSessionIds = new Set<string>();
+    // A fork's session.created can arrive before session.fork returns its id.
+    const forkingSessionIds = new Set<string>();
     const busy = new Set<string>();
     const commandStarts = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
@@ -968,6 +980,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
+      promptSuggestionFiber: null,
+      promptSuggestionGeneration: 0,
     });
 
     const rootOf = (state: ThreadState): ThreadState => {
@@ -1721,9 +1735,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const makeTurn = (
       owner: TurnOwner,
       providerTurn: OrchestrationV2ProviderTurn,
-      options: { readonly scope: string; readonly awaitingStart: boolean },
+      options: {
+        readonly scope: string;
+        readonly awaitingStart: boolean;
+        readonly continuation: boolean;
+      },
     ): ActiveTurn => ({
       input: owner,
+      continuation: options.continuation,
       providerTurn,
       texts: new Map(),
       answer: undefined,
@@ -2331,7 +2350,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           runtimePolicy: subagent.call.turn.input.runtimePolicy,
         },
         providerTurn,
-        { scope: `${child.sessionId}:`, awaitingStart: false },
+        { scope: `${child.sessionId}:`, awaitingStart: false, continuation: true },
       );
       turn.before = subagent.queued;
       subagent.queued = undefined;
@@ -2400,6 +2419,107 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           wake.dropped ? Effect.succeedNone : Effect.asSome(dispatch),
       });
     });
+
+    const forgetPromptSuggestionFork = (sessionID: Session.ID) =>
+      client.session
+        .remove({ sessionID })
+        .pipe(
+          Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+          Effect.timeout("5 seconds"),
+          Effect.ignore({ log: "Debug" }),
+        );
+
+    const abortPromptSuggestionFork = (sessionID: Session.ID) =>
+      client.session
+        .interrupt({ sessionID })
+        .pipe(
+          Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+          Effect.timeout("2 seconds"),
+          Effect.ignore({ log: "Debug" }),
+        );
+
+    const interruptPromptSuggestion = Effect.fnUntraced(function* (state: ThreadState) {
+      state.promptSuggestionGeneration += 1;
+      const fiber = state.promptSuggestionFiber;
+      state.promptSuggestionFiber = null;
+      if (fiber !== null) yield* Fiber.interrupt(fiber).pipe(Effect.ignore);
+    });
+
+    const samplePromptSuggestion = Effect.fn("OpenCode2Adapter.samplePromptSuggestion")(
+      function* (state: ThreadState, turn: ActiveTurn, generation: number) {
+        const runId = turn.input.runId;
+        const enabled = yield* promptSuggestionsEnabled;
+        if (
+          !enabled ||
+          turn.continuation ||
+          runId === null ||
+          state.subagent !== undefined ||
+          isDelegatedAppThread(turn.input.appThread) ||
+          state.promptSuggestionGeneration !== generation
+        ) {
+          return;
+        }
+        const variants = modelVariants.get(state.directory)?.get(turn.input.modelSelection.model);
+        const variant = OpenCodeRuntime.lowestOpenCodeVariant(variants ?? []);
+        const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(turn.input.modelSelection.model);
+        if (parsed === null) return;
+        const suggestionModel =
+          variants === undefined
+            ? undefined
+            : Model.Ref.make({
+                providerID: Provider.ID.make(parsed.providerID),
+                id: Model.ID.make(parsed.modelID),
+                ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+              });
+        forkingSessionIds.add(state.sessionId);
+        const fork = yield* client.session
+          .fork({ sessionID: Session.ID.make(state.sessionId) })
+          .pipe(Effect.ensuring(Effect.sync(() => forkingSessionIds.delete(state.sessionId))));
+        const forkId = Session.ID.make(fork.id);
+        ignoredSessionIds.add(fork.id);
+        if (ignoredSessionIds.size > 128) {
+          ignoredSessionIds.delete(ignoredSessionIds.values().next().value!);
+        }
+        yield* Effect.gen(function* () {
+          // The fork inherits the thread's permissions; a suggestion must never run a tool.
+          yield* client.session.update({ sessionID: forkId, permissions: [rule("*", "deny")] });
+          if (suggestionModel !== undefined) {
+            yield* client.session.switchModel({ sessionID: forkId, model: suggestionModel });
+          }
+          yield* client.session.prompt({
+            sessionID: forkId,
+            text: PROMPT_SUGGESTION_PROMPT,
+          });
+          yield* client.session.wait({ sessionID: forkId });
+          const response = yield* client.message.list({
+            sessionID: forkId,
+            order: "desc",
+            limit: 1,
+            type: "assistant",
+          });
+          const assistant = response.data[0];
+          const suggestion =
+            assistant?.type === "assistant" ? textOf(assistant.content).trim() : "";
+          if (suggestion.length === 0 || state.promptSuggestionGeneration !== generation) {
+            return;
+          }
+          yield* emit({
+            type: "prompt_suggestion.updated",
+            driver,
+            threadId: turn.input.threadId,
+            runId,
+            text: suggestion,
+          });
+        }).pipe(
+          Effect.timeout("2 minutes"),
+          Effect.onError(() => abortPromptSuggestionFork(forkId)),
+          Effect.ensuring(forgetPromptSuggestionFork(forkId)),
+        );
+      },
+      Effect.catchCause((cause) =>
+        Effect.logDebug("opencode2-prompt-suggestion-failed", { cause }),
+      ),
+    );
 
     const finishTurn = Effect.fnUntraced(function* (
       state: ThreadState,
@@ -2545,6 +2665,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
           : { ...base, status: terminal.status, failure: null },
       );
+      if (
+        terminal.status === "completed" &&
+        !turn.continuation &&
+        !isDelegatedAppThread(turn.input.appThread)
+      ) {
+        const generation = ++state.promptSuggestionGeneration;
+        state.promptSuggestionFiber = yield* samplePromptSuggestion(state, turn, generation).pipe(
+          Effect.forkIn(sessionScope),
+        );
+      }
       // Cold servers list models lazily; refresh unknown windows off-stream for the next turn.
       if (window === undefined) {
         yield* Effect.forkIn(readModels(directoryOf(turn.input.runtimePolicy.cwd)), sessionScope);
@@ -3434,6 +3564,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const sessionId = sessionOfEvent(event);
+      if (sessionId !== undefined && ignoredSessionIds.has(sessionId)) return;
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
         if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
@@ -3466,6 +3597,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       if (event.type === "session.created" && event.data.parentID !== undefined) {
+        if (forkingSessionIds.has(event.data.parentID)) {
+          ignoredSessionIds.add(event.data.sessionID);
+          return;
+        }
         const strayCaller = strays.get(event.data.parentID);
         if (strayCaller !== undefined) {
           strays.set(event.data.sessionID, strayCaller);
@@ -4553,7 +4688,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         startedAt,
         completedAt: null,
       };
-      const turn = makeTurn(turnInput, providerTurn, { scope: "", awaitingStart });
+      const turn = makeTurn(turnInput, providerTurn, {
+        scope: "",
+        awaitingStart,
+        continuation: isContinuation(turnInput),
+      });
       if (streamFailure !== undefined) {
         return yield* new ProviderAdapter.ProviderAdapterEventStreamError({
           driver,
@@ -5075,6 +5214,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   reason: "previous_turn_active",
                 });
               }
+              yield* interruptPromptSuggestion(state);
               if (isContinuation(turnInput)) return yield* runWake(state, turnInput);
               const afterUnsettled = state.unsettled;
               let stillStopping = false;

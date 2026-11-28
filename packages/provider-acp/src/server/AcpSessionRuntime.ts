@@ -1120,6 +1120,24 @@ export interface AcpSessionActivationOptions {
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
 }
 
+export interface AcpDetachedSession {
+  readonly sessionId: string;
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly setConfigOption: (
+    configId: string,
+    value: string | boolean,
+  ) => Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>, EffectAcpErrors.AcpError>;
+}
+
+export interface AcpDetachedSessionPromptInput {
+  readonly sourceSessionId: string;
+  readonly prompt: ReadonlyArray<EffectAcpSchema.ContentBlock>;
+  readonly onUpdate: (notification: EffectAcpSchema.SessionNotification) => Effect.Effect<void>;
+  readonly configure?: (
+    session: AcpDetachedSession,
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+}
+
 export class AcpSessionRuntime extends Context.Service<
   AcpSessionRuntime,
   {
@@ -1199,6 +1217,14 @@ export class AcpSessionRuntime extends Context.Service<
         readonly released?: Deferred.Deferred<void>;
       },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Prompts a fork without making it this runtime's active session. Updates for the fork are
+     * delivered only to `onUpdate`, and the fork is cancelled and closed when the effect ends.
+     */
+    readonly promptDetachedSession: (
+      input: AcpDetachedSessionPromptInput,
+    ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    readonly isDetachedSession: (sessionId: string) => Effect.Effect<boolean>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly terminateProcessGroup?: Effect.Effect<void, AcpProcessGroupTerminationError>;
     readonly setMode: (
@@ -1786,6 +1812,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   // Counts applied `config_option_update`s; see setConfigOption.
   const configOptionUpdates = yield* Ref.make(0);
+  const detachedSessionUpdates = new Map<
+    string,
+    (notification: EffectAcpSchema.SessionNotification) => Effect.Effect<void>
+  >();
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
     (notification.update.sessionUpdate === "config_option_update"
       ? Ref.update(configOptionUpdates, (count) => count + 1).pipe(
@@ -1813,6 +1843,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     notificationSemaphore.withPermit(
       Effect.gen(function* () {
         if (Option.isSome(yield* Ref.get(terminationErrorRef))) {
+          return;
+        }
+        const detachedUpdate = detachedSessionUpdates.get(notification.sessionId);
+        if (detachedUpdate !== undefined) {
+          yield* detachedUpdate(notification);
           return;
         }
         const gate = yield* Ref.get(sessionLoadGateRef);
@@ -2324,6 +2359,99 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ),
       ),
     );
+
+  const promptDetachedSession = Effect.fn("AcpSessionRuntime.promptDetachedSession")(function* (
+    input: AcpDetachedSessionPromptInput,
+  ) {
+    const started = yield* start;
+    if (started.initializeResult.agentCapabilities?.sessionCapabilities?.fork == null) {
+      return yield* new EffectAcpErrors.AcpRequestError({
+        code: -32601,
+        errorMessage: "ACP agent does not advertise session/fork support",
+      });
+    }
+
+    // Only fork and prompt hold the prompt permit; cleanup runs after it, so the next turn never waits on it.
+    return yield* Effect.acquireUseRelease(
+      promptSerializationSemaphore.withPermit(
+        Effect.gen(function* () {
+          const requestPayload = {
+            sessionId: input.sourceSessionId,
+            cwd: options.cwd,
+          } satisfies EffectAcpSchema.ForkSessionRequest;
+          const forked = yield* runLoggedRequest(
+            "session/fork",
+            requestPayload,
+            acp.agent.forkSession(requestPayload),
+          );
+          detachedSessionUpdates.set(forked.sessionId, input.onUpdate);
+          return forked;
+        }),
+      ),
+      (forked) =>
+        promptSerializationSemaphore.withPermit(
+          Effect.gen(function* () {
+            const configOptions = sessionConfigOptionsFromSetup(forked);
+            const setDetachedConfigOption = (configId: string, value: string | boolean) => {
+              const requestPayload =
+                typeof value === "boolean"
+                  ? ({
+                      sessionId: forked.sessionId,
+                      configId,
+                      type: "boolean",
+                      value,
+                    } satisfies EffectAcpSchema.SetSessionConfigOptionRequest)
+                  : ({
+                      sessionId: forked.sessionId,
+                      configId,
+                      value,
+                    } satisfies EffectAcpSchema.SetSessionConfigOptionRequest);
+              return runLoggedSessionWrite(
+                "session/set_config_option",
+                requestPayload,
+                acp.agent.setSessionConfigOption(requestPayload),
+              ).pipe(Effect.map((response) => response.configOptions));
+            };
+            if (input.configure !== undefined) {
+              yield* input.configure({
+                sessionId: forked.sessionId,
+                configOptions,
+                setConfigOption: setDetachedConfigOption,
+              });
+            }
+            const requestPayload = {
+              sessionId: forked.sessionId,
+              prompt: input.prompt,
+            } satisfies EffectAcpSchema.PromptRequest;
+            return yield* runLoggedRequest(
+              "session/prompt",
+              requestPayload,
+              acp.agent.prompt(requestPayload),
+            );
+          }),
+        ),
+      (forked) =>
+        Effect.gen(function* () {
+          // Late fork updates stay routed to a no-op until the close lands, so none reach the thread.
+          const ignoreUpdates: typeof input.onUpdate = () => Effect.void;
+          detachedSessionUpdates.set(forked.sessionId, ignoreUpdates);
+          yield* acp.agent.cancel({ sessionId: forked.sessionId }).pipe(Effect.ignore);
+          if (started.initializeResult.agentCapabilities?.sessionCapabilities?.close != null) {
+            yield* runLoggedRequest(
+              "session/close",
+              { sessionId: forked.sessionId },
+              acp.agent.closeSession({ sessionId: forked.sessionId }),
+            ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              detachedSessionUpdates.delete(forked.sessionId);
+            }),
+          ),
+        ),
+    );
+  });
 
   const initializeOnce = Effect.gen(function* () {
     const initializePayload = {
@@ -2962,6 +3090,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               : joinPrompt(outcome.fiber),
           ),
         ),
+    promptDetachedSession: (input) => promptDetachedSession(input),
+    isDetachedSession: (sessionId) => Effect.sync(() => detachedSessionUpdates.has(sessionId)),
     // A cancel that waits for its prompt holds the dispatch permit, so a next prompt cannot reach
     // the agent ahead of it and take the cancel meant for the prompt before.
     cancel:

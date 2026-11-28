@@ -812,6 +812,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generatePromptPolish: () => Effect.die("unused"),
+          generatePromptSuggestion: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
           generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generateThreadTitle: (input) =>
@@ -931,6 +932,7 @@ it.effect(
               return {} as TextGeneration.ReviewGuideGenerationResult;
             }),
           generatePromptPolish: () => Effect.die("unused"),
+          generatePromptSuggestion: () => Effect.die("unused"),
         }),
       } satisfies ProviderInstance;
       const serviceWith = (instances: ReadonlyArray<ProviderInstance>) =>

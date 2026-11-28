@@ -321,10 +321,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         env,
         launchArgs: codexMcpListLaunchArgs(launchArgs),
       });
-      if (!mcpListResult.ok && operation === "generatePromptPolish") {
+      const toolFreeOperation =
+        operation === "generatePromptPolish" || operation === "generatePromptSuggestion";
+      if (!mcpListResult.ok && toolFreeOperation) {
         return yield* new TextGenerationError({
           operation,
-          detail: "Cannot guarantee MCP isolation for prompt polish: " + mcpListResult.reason + ".",
+          detail:
+            `Cannot guarantee MCP isolation for ${
+              operation === "generatePromptPolish" ? "prompt polish" : "prompt suggestion"
+            }: ` +
+            mcpListResult.reason +
+            ".",
         });
       }
       const enabledMcpServers = mcpListResult.ok ? mcpListResult.names : [];
@@ -348,7 +355,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
-          ...(operation === "generatePromptPolish"
+          ...(toolFreeOperation
             ? [
                 "--config",
                 "features.shell_tool=false",

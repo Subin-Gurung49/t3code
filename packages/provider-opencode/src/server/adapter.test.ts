@@ -45,6 +45,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { PROMPT_SUGGESTION_PROMPT } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -197,6 +198,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
     readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
     readonly attachments?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
+    readonly delegated?: boolean;
+    readonly promptSuggestions?: Effect.Effect<boolean>;
   } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -237,6 +240,9 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     providerSessionId: ProviderSessionId.make(`session-opencode-${suffix}`),
     modelSelection,
     runtimePolicy: policy,
+    ...(turnSettings.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: turnSettings.promptSuggestions }),
   });
   const providerThread = yield* runtime.ensureThread({
     threadId,
@@ -244,6 +250,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     runtimePolicy: policy,
   });
   const now = yield* DateTime.now;
+  const parentThreadId = ThreadId.make(`thread-opencode-${suffix}-parent`);
   const startTurn = (
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
@@ -264,7 +271,13 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         branch: null,
         worktreePath: null,
         activeProviderThreadId: providerThread.id,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        lineage: turnSettings.delegated
+          ? {
+              parentThreadId,
+              relationshipToParent: "subagent" as const,
+              rootThreadId: parentThreadId,
+            }
+          : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
         forkedFrom: null,
         createdBy: "user",
         creationSource: "web",
@@ -307,7 +320,328 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   };
 });
 
+const finishOpenCodeTurn = Effect.fnUntraced(function* (
+  events: ReturnType<typeof asyncEventStream>,
+  sessionID: string,
+  messageID: string,
+) {
+  yield* Effect.promise(() =>
+    events.push({
+      type: "session.status",
+      properties: { sessionID, status: { type: "busy" } },
+    }),
+  );
+  yield* Effect.promise(() =>
+    events.push({
+      type: "message.updated",
+      properties: {
+        sessionID,
+        info: { id: messageID, sessionID, role: "user", time: { created: 1 } },
+      },
+    }),
+  );
+  yield* Effect.promise(() => events.push({ type: "session.idle", properties: { sessionID } }));
+});
+
 describe("OpenCodeAdapterV2", () => {
+  it.effect("emits an OpenCode prompt suggestion without projecting its fork", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = "suggestion-root";
+      const forkId = "suggestion-fork";
+      const prompts: Array<Record<string, unknown>> = [];
+      const deleted = promiseGate<void>();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "suggestion-success",
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => ({
+              data: {
+                all: [
+                  {
+                    id: "anthropic",
+                    models: {
+                      "claude-sonnet": { variants: { high: {}, low: {}, medium: {} } },
+                    },
+                  },
+                ],
+              },
+            }),
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              prompts.push(input);
+              return { data: true };
+            },
+            fork: async (input: { sessionID: string }) => {
+              assert.equal(input.sessionID, sessionId);
+              return { data: { id: forkId, time: { created: 1, updated: 2 } } };
+            },
+            prompt: async (input: Record<string, unknown>) => {
+              assert.equal(input.sessionID, forkId);
+              assert.deepEqual(input.model, { providerID: "anthropic", modelID: "claude-sonnet" });
+              assert.equal(input.variant, "low");
+              assert.deepEqual(input.parts, [{ type: "text", text: PROMPT_SUGGESTION_PROMPT }]);
+              await nativeEvents.push({
+                type: "session.created",
+                properties: {
+                  info: {
+                    id: forkId,
+                    parentID: sessionId,
+                    time: { created: 1, updated: 1 },
+                  },
+                },
+              });
+              await nativeEvents.push({
+                type: "message.part.updated",
+                properties: {
+                  sessionID: forkId,
+                  part: {
+                    id: "fork-text",
+                    sessionID: forkId,
+                    messageID: "fork-message",
+                    type: "text",
+                    text: "leaked",
+                    time: { start: 1 },
+                  },
+                },
+              });
+              return {
+                data: {
+                  info: { id: "fork-message", sessionID: forkId, role: "assistant" },
+                  parts: [
+                    { id: "fork-reasoning", type: "reasoning", text: "ignored" },
+                    { id: "fork-text", type: "text", text: "  add tests for subtract\n" },
+                  ],
+                },
+              };
+            },
+            delete: async (input: { sessionID: string }) => {
+              assert.equal(input.sessionID, forkId);
+              deleted.resolve();
+              return { data: true };
+            },
+          },
+        },
+        {},
+        {
+          model: "anthropic/claude-sonnet",
+          promptSuggestions: Effect.succeed(true),
+        },
+      );
+      const collected = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "prompt_suggestion.updated"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn();
+      yield* finishOpenCodeTurn(nativeEvents, sessionId, String(prompts[0]!.messageID));
+      const events = yield* Fiber.join(collected);
+      yield* Effect.promise(() => deleted.promise);
+      const suggestion = events.find((event) => event.type === "prompt_suggestion.updated");
+      assert.deepEqual(suggestion, {
+        type: "prompt_suggestion.updated",
+        driver: OPENCODE_PROVIDER,
+        threadId: harness.threadId,
+        runId: RunId.make("run-opencode-suggestion-success"),
+        text: "add tests for subtract",
+      });
+      assert.notInclude(JSON.stringify(events), forkId);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("deletes the OpenCode suggestion fork when sampling fails", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = "suggestion-failure";
+      const deleted = promiseGate<void>();
+      const prompts: Array<Record<string, unknown>> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "suggestion-failure",
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: { list: async () => ({ data: { all: [] } }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              prompts.push(input);
+              return { data: true };
+            },
+            fork: async () => ({ data: { id: "failed-suggestion-fork" } }),
+            prompt: async () => {
+              throw new Error("suggestion failed");
+            },
+            abort: async () => ({ data: true }),
+            delete: async () => {
+              deleted.resolve();
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { promptSuggestions: Effect.succeed(true) },
+      );
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn();
+      yield* finishOpenCodeTurn(nativeEvents, sessionId, String(prompts[0]!.messageID));
+      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
+      yield* Effect.promise(() => deleted.promise);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("interrupts and deletes an OpenCode suggestion fork when a new turn starts", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = "suggestion-interrupt";
+      const started = promiseGate<void>();
+      const aborted = promiseGate<void>();
+      const deleted = promiseGate<void>();
+      const prompts: Array<Record<string, unknown>> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "suggestion-interrupt",
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: { list: async () => ({ data: { all: [] } }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              prompts.push(input);
+              return { data: true };
+            },
+            fork: async () => ({ data: { id: "interrupted-suggestion-fork" } }),
+            prompt: async (_input: Record<string, unknown>, options: { signal: AbortSignal }) => {
+              started.resolve();
+              return await new Promise<never>((_resolve, reject) => {
+                options.signal.addEventListener(
+                  "abort",
+                  () => {
+                    aborted.resolve();
+                    reject(new Error("suggestion interrupted"));
+                  },
+                  { once: true },
+                );
+              });
+            },
+            abort: async () => {
+              return { data: true };
+            },
+            delete: async () => {
+              deleted.resolve();
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { promptSuggestions: Effect.succeed(true) },
+      );
+      yield* harness.startTurn();
+      yield* finishOpenCodeTurn(nativeEvents, sessionId, String(prompts[0]!.messageID));
+      yield* Effect.promise(() => started.promise);
+      yield* harness.startTurn("continue", undefined, undefined, false, "second");
+      yield* Effect.promise(() => aborted.promise);
+      yield* Effect.promise(() => deleted.promise);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect.each([
+    { name: "disabled", enabled: false, delegated: false, ending: "completed" },
+    { name: "delegated", enabled: true, delegated: true, ending: "completed" },
+    { name: "failed", enabled: true, delegated: false, ending: "failed" },
+    { name: "interrupted", enabled: true, delegated: false, ending: "interrupted" },
+  ] as const)("does not request an OpenCode suggestion when $name", (sample) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = `suggestion-${sample.name}`;
+      const flagRead = yield* Deferred.make<void>();
+      let forks = 0;
+      const prompts: Array<Record<string, unknown>> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        `suggestion-${sample.name}`,
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              prompts.push(input);
+              return { data: true };
+            },
+            fork: async () => {
+              forks += 1;
+              return { data: { id: "unexpected-fork" } };
+            },
+          },
+        },
+        {},
+        {
+          delegated: sample.delegated,
+          promptSuggestions: Effect.suspend(() => Deferred.succeed(flagRead, undefined)).pipe(
+            Effect.as(sample.enabled),
+          ),
+        },
+      );
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn();
+      if (sample.ending === "completed") {
+        yield* finishOpenCodeTurn(nativeEvents, sessionId, String(prompts[0]!.messageID));
+      } else {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.error",
+            properties: {
+              sessionID: sessionId,
+              error:
+                sample.ending === "interrupted"
+                  ? { name: "MessageAbortedError" }
+                  : { name: "APIError", data: { message: "failed" } },
+            },
+          }),
+        );
+      }
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(Option.getOrUndefined(ended)?.status, sample.ending);
+      if (sample.ending === "completed" && !sample.delegated) {
+        yield* Deferred.await(flagRead);
+      }
+      assert.equal(forks, 0);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("cleans abandoned native descendants before registering their root thread", () =>
     Effect.gen(function* () {
       const aborted: string[] = [];

@@ -98,6 +98,13 @@ const operationOf = (
       input: { sessionID: entry[1], key: entry[2], ...(body as object) },
     };
   }
+  const experimentalWait = /^\/api\/experimental\/session\/([^/]+)\/wait$/.exec(path);
+  if (experimentalWait !== null && method === "POST") {
+    return {
+      type: "session.wait",
+      input: { sessionID: experimentalWait[1], ...query },
+    };
+  }
   if (method === "GET" && path === "/api/skill") return { type: "skill.list", input: query };
   if (session !== null) {
     const [, sessionID, rest = ""] = session;
@@ -343,6 +350,7 @@ export const openCode2ReplayRuntime = (
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
+    readonly promptSuggestions?: Effect.Effect<boolean>;
   },
 ) =>
   Effect.gen(function* () {
@@ -369,6 +377,9 @@ export const openCode2ReplayRuntime = (
         interactionMode: "default",
         cwd: "/work/opencode2",
       },
+      ...(options?.promptSuggestions === undefined
+        ? {}
+        : { promptSuggestions: options.promptSuggestions }),
     });
   }).pipe(
     Effect.provide(

@@ -404,6 +404,30 @@ export function openCodeVariant(selection: ModelSelection): string | undefined {
   return variant === DEFAULT_VARIANT_CHOICE_ID ? undefined : variant;
 }
 
+const OPENCODE_VARIANT_EFFORT: Readonly<Record<string, number>> = {
+  minimal: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  xhigh: 4,
+  max: 5,
+};
+
+/** Catalog order is provider-defined; prefer a known low effort when the model lists one. */
+export function lowestOpenCodeVariant(variants: Iterable<string>): string | undefined {
+  const values = [...variants];
+  let selected: string | undefined;
+  let selectedRank = Number.POSITIVE_INFINITY;
+  for (const value of values) {
+    const rank = OPENCODE_VARIANT_EFFORT[value];
+    if (rank !== undefined && rank < selectedRank) {
+      selected = value;
+      selectedRank = rank;
+    }
+  }
+  return selected ?? values[0];
+}
+
 export function openCodeQuestionId(
   index: number,
   question: QuestionRequest["questions"][number],

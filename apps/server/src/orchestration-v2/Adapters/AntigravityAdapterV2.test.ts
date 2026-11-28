@@ -41,6 +41,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { PROMPT_SUGGESTION_PROMPT } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -664,7 +665,7 @@ describe("AntigravityAdapterV2 token usage", () => {
           usageScope: "main_agent",
           usageStatus: source === "cancelled" ? "partial" : "complete",
           inputTokens: source === "sparse" ? 1_500 : 1_900,
-          outputTokens: source === "sparse" ? 120 : 150,
+          outputTokens: 120,
           ...(source === "sparse"
             ? {}
             : { reasoningTokens: 30, cachedInputTokens: 400, cacheCreationTokens: 100 }),
@@ -1742,6 +1743,20 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    readonly promptSuggestions?: Effect.Effect<boolean>;
+    readonly promptSuggestionModelSelection?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["promptSuggestionModelSelection"];
+    readonly generatePromptSuggestion?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["generatePromptSuggestion"];
+    readonly sessionLifecycle?: boolean;
+    readonly sessionClose?: boolean;
+    readonly antigravityThoughtLevel?: boolean;
+    readonly requestLogPath?: string;
+    readonly forkPromptText?: string;
+    readonly forkPromptToolCall?: boolean;
+    readonly forkPromptPermission?: boolean;
+    readonly forkPromptFail?: boolean;
+    readonly onPromptSuggestionSettled?: (
+      outcome: "skipped" | "empty" | "emitted" | "failed",
+    ) => Effect.Effect<void>;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1794,6 +1809,22 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
           env: {
             T3_ACP_ANTIGRAVITY: "1",
             ...(steering === undefined ? {} : { T3_ACP_AGENT_VERSION: steering.agentVersion }),
+            ...(options?.sessionLifecycle === true ? { T3_ACP_SESSION_LIFECYCLE: "1" } : {}),
+            ...(options?.sessionClose === true ? { T3_ACP_SESSION_CLOSE: "1" } : {}),
+            ...(options?.antigravityThoughtLevel === true
+              ? { T3_ACP_ANTIGRAVITY_THOUGHT_LEVEL: "1" }
+              : {}),
+            ...(options?.requestLogPath === undefined
+              ? {}
+              : { T3_ACP_REQUEST_LOG_PATH: options.requestLogPath }),
+            ...(options?.forkPromptText === undefined
+              ? {}
+              : { T3_ACP_FORK_PROMPT_TEXT: options.forkPromptText }),
+            ...(options?.forkPromptToolCall === true ? { T3_ACP_FORK_PROMPT_TOOL_CALL: "1" } : {}),
+            ...(options?.forkPromptPermission === true
+              ? { T3_ACP_FORK_PROMPT_PERMISSION: "1" }
+              : {}),
+            ...(options?.forkPromptFail === true ? { T3_ACP_FORK_PROMPT_FAIL: "1" } : {}),
           },
         },
       }).pipe(
@@ -1873,6 +1904,9 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             : { continuationRequests: adapterOptions.continuationRequests }),
           testHooks: {
             onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
+            ...(options.onPromptSuggestionSettled === undefined
+              ? {}
+              : { onPromptSuggestionSettled: options.onPromptSuggestionSettled }),
           },
         });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -1886,6 +1920,15 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     providerSessionId: ProviderSessionId.make("provider-session-antigravity-wake"),
     modelSelection,
     runtimePolicy,
+    ...(options?.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: options.promptSuggestions }),
+    ...(options?.promptSuggestionModelSelection === undefined
+      ? {}
+      : { promptSuggestionModelSelection: options.promptSuggestionModelSelection }),
+    ...(options?.generatePromptSuggestion === undefined
+      ? {}
+      : { generatePromptSuggestion: options.generatePromptSuggestion }),
   });
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* session.events.pipe(
@@ -1907,7 +1950,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     runtimePolicy,
   });
   const now = yield* DateTime.now;
-  const startTurn = (ordinal: number, continuation: boolean) =>
+  const startTurn = (ordinal: number, continuation: boolean, delegated = false) =>
     session.startTurn({
       appThread: {
         createdBy: "user",
@@ -1923,6 +1966,15 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         worktreePath: process.cwd(),
         activeProviderThreadId: providerThread.id,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        ...(delegated
+          ? {
+              delegatedFrom: {
+                environmentId: EnvironmentId.make("environment-antigravity-suggestion"),
+                threadId: ThreadId.make("thread-antigravity-suggestion-parent"),
+                title: "Suggestion parent",
+              },
+            }
+          : {}),
         forkedFrom: null,
         createdAt: now,
         updatedAt: now,
@@ -1954,6 +2006,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   return {
     session,
     providerThread,
+    events,
     command,
     usage,
     offers,
@@ -3288,6 +3341,397 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+type PromptSuggestionOutcome = "skipped" | "empty" | "emitted" | "failed";
+
+interface LoggedAcpRequest {
+  readonly method?: string;
+  readonly params?: {
+    readonly sessionId?: string;
+    readonly prompt?: unknown;
+    readonly configId?: string;
+    readonly value?: string;
+  };
+}
+
+const readLoggedAcpRequests = (fileSystem: FileSystem.FileSystem, requestLog: string) =>
+  fileSystem.readFileString(requestLog).pipe(
+    Effect.map((content) =>
+      content
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as LoggedAcpRequest),
+    ),
+  );
+
+type OpenedRunningSession = Effect.Success<ReturnType<typeof openSessionWithRunningCommand>>;
+
+const completeRunningTurn = Effect.fn("completeRunningTurn")(function* (
+  opened: OpenedRunningSession,
+) {
+  yield* opened.throughPromptSettled;
+  yield* opened.send({
+    sessionUpdate: "tool_call_update",
+    ...opened.command,
+    status: "completed",
+    rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+  });
+  yield* opened.send(opened.usage);
+  yield* TestClock.adjust("3 seconds");
+  yield* opened.throughTerminal;
+});
+
+describe("AntigravityAdapterV2 prompt suggestions", () => {
+  it.effect("uses a selected text model without forking the Antigravity session", () => {
+    let captured:
+      | Parameters<
+          NonNullable<ProviderAdapter.ProviderAdapterV2OpenSessionInput["generatePromptSuggestion"]>
+        >[0]
+      | undefined;
+
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-model-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          promptSuggestionModelSelection: Effect.succeed({
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode-go/deepseek-v4.1-flash",
+          }),
+          generatePromptSuggestion: (input) => {
+            captured = input;
+            return Effect.succeed("run the focused tests");
+          },
+          sessionLifecycle: true,
+          requestLogPath: requestLog,
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* completeRunningTurn(opened);
+      const events = yield* opened.until((event) => event.type === "prompt_suggestion.updated");
+      const suggestion = events.findLast((event) => event.type === "prompt_suggestion.updated");
+      assert.deepEqual(suggestion, {
+        type: "prompt_suggestion.updated",
+        driver: ProviderDriverKind.make("antigravity"),
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        text: "run the focused tests",
+      });
+      assert.deepEqual(captured, {
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+      });
+      assert.equal(yield* Deferred.await(settled), "emitted");
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      assert.isFalse(requests.some((request) => request.method === "session/fork"));
+    }).pipe(Effect.provide(layerSession));
+  });
+
+  it.effect("suggests after a completed root turn and cleans up a permission-gated fork", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          sessionClose: true,
+          antigravityThoughtLevel: true,
+          requestLogPath: requestLog,
+          forkPromptPermission: true,
+          forkPromptText: "add reverse-order tests",
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* completeRunningTurn(opened);
+      const events = yield* opened.until((event) => event.type === "prompt_suggestion.updated");
+      const suggestion = events.findLast((event) => event.type === "prompt_suggestion.updated");
+      assert.deepEqual(suggestion, {
+        type: "prompt_suggestion.updated",
+        driver: ProviderDriverKind.make("antigravity"),
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        text: "add reverse-order tests",
+      });
+      assert.equal(yield* Deferred.await(settled), "emitted");
+      assert.isFalse(events.some((event) => event.type === "runtime_request.updated"));
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "add reverse-order tests",
+        ),
+      );
+
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      const fork = requests.find((request) => request.method === "session/fork");
+      assert.isDefined(fork);
+      const sourceSessionId = fork?.params?.sessionId;
+      assert.isString(sourceSessionId);
+      const forkSessionId = `${sourceSessionId}-fork`;
+      const forkPrompt = requests.find(
+        (request) =>
+          request.method === "session/prompt" && request.params?.sessionId === forkSessionId,
+      );
+      assert.deepEqual(forkPrompt?.params?.prompt, [
+        { type: "text", text: PROMPT_SUGGESTION_PROMPT },
+      ]);
+      const thoughtLevel = requests.find(
+        (request) =>
+          request.method === "session/set_config_option" &&
+          request.params?.sessionId === forkSessionId &&
+          request.params?.configId === "thought_level",
+      );
+      assert.equal(thoughtLevel?.params?.value, "low");
+      assert.isTrue(
+        requests.some(
+          (request) =>
+            request.method === "session/close" && request.params?.sessionId === forkSessionId,
+        ),
+      );
+      assert.isTrue(
+        requests.some(
+          (request) =>
+            request.method === "session/cancel" && request.params?.sessionId === forkSessionId,
+        ),
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect.each([
+    {
+      name: "disabled",
+      lifecycle: true,
+      promptSuggestions: false,
+      expected: "skipped" as const,
+    },
+    {
+      name: "fork unsupported",
+      lifecycle: false,
+      promptSuggestions: true,
+      expected: "empty" as const,
+    },
+  ])("does not fork when $name", ({ lifecycle, promptSuggestions, expected }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-skip-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(promptSuggestions),
+          sessionLifecycle: lifecycle,
+          requestLogPath: requestLog,
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* completeRunningTurn(opened);
+      assert.equal(yield* Deferred.await(settled), expected);
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      assert.isFalse(requests.some((request) => request.method === "session/fork"));
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not suggest after a failed turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-failed-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          requestLogPath: requestLog,
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* opened.throughPromptSettled;
+      yield* opened.runtimeDies;
+      const terminal = (yield* opened.throughTerminal).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      assert.isFalse(requests.some((request) => request.method === "session/fork"));
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not suggest after an interrupted turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-interrupted-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          requestLogPath: requestLog,
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      const started = yield* opened.throughPromptSettled;
+      const turn = started.find((event) => event.type === "provider_turn.updated");
+      if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+      yield* opened.session.interruptTurn({
+        providerThread: opened.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      const terminal = (yield* opened.throughTerminal).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      assert.isFalse(requests.some((request) => request.method === "session/fork"));
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not suggest for a delegated thread", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-delegated-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          requestLogPath: requestLog,
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false, true);
+      yield* completeRunningTurn(opened);
+      assert.equal(yield* Deferred.await(settled), "skipped");
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      assert.isFalse(requests.some((request) => request.method === "session/fork"));
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("cleans up the fork when its suggestion prompt fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-fork-failed-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          sessionClose: true,
+          requestLogPath: requestLog,
+          forkPromptFail: true,
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* completeRunningTurn(opened);
+      assert.equal(yield* Deferred.await(settled), "failed");
+      const requests = yield* readLoggedAcpRequests(fileSystem, requestLog);
+      const fork = requests.find((request) => request.method === "session/fork");
+      assert.isDefined(fork);
+      const forkSessionId = `${fork?.params?.sessionId}-fork`;
+      assert.isTrue(
+        requests.some(
+          (request) =>
+            request.method === "session/close" && request.params?.sessionId === forkSessionId,
+        ),
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps fork tool updates out of the thread", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-suggestion-leak-",
+      });
+      const requestLog = path.join(directory, "requests.ndjson");
+      const settled = yield* Deferred.make<PromptSuggestionOutcome>();
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        {
+          promptSuggestions: Effect.succeed(true),
+          sessionLifecycle: true,
+          sessionClose: true,
+          requestLogPath: requestLog,
+          forkPromptToolCall: true,
+          onPromptSuggestionSettled: (outcome) => Deferred.succeed(settled, outcome),
+        },
+      );
+
+      yield* opened.startTurn(1, false);
+      yield* completeRunningTurn(opened);
+      assert.equal(yield* Deferred.await(settled), "emitted");
+      const leaked = yield* Queue.takeAll(opened.events);
+      assert.isFalse(
+        leaked.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "fork-tool-call",
+        ),
+      );
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 

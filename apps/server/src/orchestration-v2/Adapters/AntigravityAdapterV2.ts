@@ -7,15 +7,19 @@ import {
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { PROMPT_SUGGESTION_PROMPT } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -25,6 +29,8 @@ import {
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   antigravitySteersWithPrompt,
+  antigravityModelOptions,
+  antigravityThinkingConfig,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -230,6 +236,112 @@ export function makeAntigravityAcpAdapterFlavor(
 
   return {
     driver: ANTIGRAVITY_PROVIDER,
+    promptSuggestion: Effect.fn("AntigravityAdapterV2.promptSuggestion")(function* ({
+      runtime,
+      sourceSessionId,
+      modelSelection,
+    }) {
+      const initialized = yield* runtime.initialize();
+      if (initialized.agentCapabilities?.sessionCapabilities?.fork == null) return undefined;
+
+      const chunks = yield* Ref.make("");
+      const completedMessage = yield* Ref.make<string | null>(null);
+      const blocked = yield* Ref.make(false);
+      const rejected = yield* Deferred.make<void>();
+      const reject = Deferred.succeed(rejected, undefined).pipe(Effect.asVoid);
+      const onUpdate: Parameters<typeof runtime.promptDetachedSession>[0]["onUpdate"] = (
+        notification,
+      ) => {
+        const update = notification.update;
+        switch (update.sessionUpdate) {
+          case "agent_message_chunk": {
+            const content = update.content;
+            return content.type === "text"
+              ? Ref.update(chunks, (text) => text + content.text)
+              : Effect.void;
+          }
+          case "agent_message":
+            return Ref.set(
+              completedMessage,
+              (update.content ?? [])
+                .filter((content) => content.type === "text")
+                .map((content) => content.text)
+                .join(""),
+            );
+          case "tool_call":
+          case "tool_call_update":
+            return Ref.set(blocked, true).pipe(Effect.andThen(reject));
+          default:
+            return Effect.void;
+        }
+      };
+
+      const outcome = yield* Effect.raceFirst(
+        runtime
+          .promptDetachedSession({
+            sourceSessionId,
+            prompt: [{ type: "text", text: PROMPT_SUGGESTION_PROMPT }],
+            configure: Effect.fn("AntigravityAdapterV2.configurePromptSuggestion")(function* ({
+              configOptions,
+              setConfigOption,
+            }) {
+              let currentConfigOptions = configOptions;
+              const requestedModel =
+                modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL
+                  ? undefined
+                  : modelSelection.model;
+              const model = currentConfigOptions.find(
+                (option) => option.id === "model" || option.category === "model",
+              );
+              if (
+                requestedModel !== undefined &&
+                model?.type === "select" &&
+                model.currentValue !== requestedModel &&
+                antigravityModelOptions(currentConfigOptions).some(
+                  (option) => option.value === requestedModel,
+                )
+              ) {
+                currentConfigOptions = yield* setConfigOption("model", requestedModel);
+              }
+              const thinking = antigravityThinkingConfig(currentConfigOptions);
+              const lowest = thinking?.options.flatMap((option) =>
+                "value" in option ? [option.value] : option.options.map((entry) => entry.value),
+              )[0];
+              if (
+                thinking !== undefined &&
+                lowest !== undefined &&
+                lowest !== thinking.currentValue
+              ) {
+                currentConfigOptions = yield* setConfigOption(thinking.id, lowest).pipe(
+                  Effect.catchTags({
+                    AcpRequestError: (error) =>
+                      error.code === -32602
+                        ? Effect.logDebug(
+                            "orchestration-v2.antigravity-prompt-suggestion-thinking-rejected",
+                            { optionId: thinking.id, value: lowest },
+                          ).pipe(Effect.as(currentConfigOptions))
+                        : Effect.fail(error),
+                  }),
+                );
+              }
+            }),
+            onUpdate,
+          })
+          .pipe(Effect.map((response) => ({ _tag: "completed" as const, response }))),
+        Deferred.await(rejected).pipe(Effect.map(() => ({ _tag: "rejected" as const }))),
+      ).pipe(Effect.timeoutOption("30 seconds"));
+
+      if (
+        Option.isNone(outcome) ||
+        outcome.value._tag === "rejected" ||
+        (yield* Ref.get(blocked))
+      ) {
+        return undefined;
+      }
+      if (outcome.value.response.stopReason !== "end_turn") return undefined;
+      const text = ((yield* Ref.get(completedMessage)) ?? (yield* Ref.get(chunks))).trim();
+      return text.length === 0 ? undefined : text;
+    }),
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),

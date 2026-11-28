@@ -240,6 +240,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generatePromptPolish(input),
         v2: v2.generatePromptPolish(input),
       }),
+    generatePromptSuggestion: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.generatePromptSuggestion(input),
+        v2: v2.generatePromptSuggestion(input),
+      }),
     generateTranscriptionPostProcessing: (input) =>
       byOpenCodeRuntime(resolve, {
         v1: v1.generateTranscriptionPostProcessing(input),

@@ -4,6 +4,7 @@ import {
   type AgentFeedbackMode,
   AuthSettingsWriteScope,
   isManagedSettingPath,
+  type ServerProvider,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
@@ -19,6 +20,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -65,14 +67,7 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
-        <MachineBetaSection
-          title={gt("Suggest next prompt")}
-          icon="text.bubble"
-          setting="promptSuggestionsEnabled"
-          description={gt(
-            "Show a predicted next message above the composer after a Claude or Codex turn. Tap to use it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
-          )}
-        />
+        <PromptSuggestionsBetaSection />
         <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
@@ -272,10 +267,7 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting =
-  | "linkedEnvironmentsEnabled"
-  | "fastWorktreeCheckout"
-  | "promptSuggestionsEnabled";
+type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
 
 const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   readonly mode: AgentFeedbackMode;
@@ -356,6 +348,153 @@ function AgentFeedbackSection() {
         </T>
       </Text>
     </View>
+  );
+}
+
+function PromptSuggestionsBetaSection() {
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  if (supported.length === 0) return null;
+
+  return (
+    <View className="gap-3">
+      {supported.map((environment) => (
+        <PromptSuggestionEnvironmentSection
+          key={environment.environmentId}
+          environment={environment}
+          canWrite={writable.has(environment.environmentId)}
+        />
+      ))}
+      <Text className="px-2 text-sm text-foreground-muted">
+        <T>
+          Show a predicted next message above the composer after a Claude, Codex, OpenCode, or
+          Antigravity turn. Tap to use it. Each is an extra cached request on your plan. Needs Codex
+          0.165+. Claude threads update on restart.
+        </T>
+      </Text>
+    </View>
+  );
+}
+
+function PromptSuggestionEnvironmentSection({
+  environment,
+  canWrite,
+}: {
+  readonly environment: ReturnType<typeof useEnvironments>["environments"][number];
+  readonly canWrite: boolean;
+}) {
+  const gt = useGT();
+  const serverConfig = useEnvironmentServerConfig(environment.environmentId);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "prompt suggestions beta update",
+    reportFailure: true,
+  });
+  const settings = environment.serverConfig?.settings;
+  const enabled = settings?.promptSuggestionsEnabled === true;
+  const policy = environment.serverConfig?.managedPolicy;
+  const managedToggle = isManagedSettingPath(policy, "promptSuggestionsEnabled");
+  const managedModel = isManagedSettingPath(policy, "antigravityPromptSuggestionModelSelection");
+  const write = (patch: ServerSettingsPatch) =>
+    void updateSettings({
+      environmentId: environment.environmentId,
+      input: { patch },
+    });
+  const providers: readonly ServerProvider[] = (serverConfig?.providers ?? [])
+    .filter(
+      (provider) =>
+        provider.enabled &&
+        provider.availability !== "unavailable" &&
+        ((provider.driver === "codex" && provider.auth.type === "chatgpt") ||
+          provider.driver === "opencode"),
+    )
+    .map((provider) => ({
+      ...provider,
+      models:
+        provider.driver === "opencode"
+          ? provider.models.filter(
+              (model) =>
+                model.slug.startsWith("opencode-go/") || model.subProvider === "OpenCode Go",
+            )
+          : provider.models,
+    }))
+    .filter((provider) => provider.models.length > 0);
+  const selection = settings?.antigravityPromptSuggestionModelSelection ?? null;
+
+  return (
+    <SettingsSection title={gt("Beta: Suggest next prompt")}>
+      <SettingsSwitchRow
+        icon="text.bubble"
+        label={environment.label}
+        subtitle={
+          managedToggle
+            ? gt("Managed by {organization}.", {
+                organization: policy?.organization,
+              })
+            : undefined
+        }
+        value={enabled}
+        disabled={managedToggle || !canWrite}
+        onValueChange={(value) => write({ promptSuggestionsEnabled: value })}
+      />
+      {enabled ? (
+        <>
+          <SettingsChoiceRow
+            label={gt("Antigravity (thread's model)")}
+            description={gt("Use Antigravity's own suggestion model and quota.")}
+            selected={selection === null}
+            separated
+            disabled={managedModel || !canWrite}
+            onPress={() => write({ antigravityPromptSuggestionModelSelection: null })}
+          />
+          {providers.length === 0 ? (
+            <SettingsChoiceRow
+              label={gt("No provider available")}
+              description={gt(
+                "Add a ChatGPT Codex account or an OpenCode Go provider on this machine.",
+              )}
+              selected={false}
+              separated
+              disabled
+              onPress={() => {}}
+            />
+          ) : (
+            providers.flatMap((provider) =>
+              provider.models.map((model) => {
+                const providerLabel = provider.displayName ?? provider.driver;
+                return (
+                  <SettingsChoiceRow
+                    key={`${provider.instanceId}:${model.slug}`}
+                    label={
+                      providers.length > 1
+                        ? `${providerLabel} - ${model.name || model.slug}`
+                        : model.name || model.slug
+                    }
+                    description={gt("Run on {provider}", { provider: providerLabel })}
+                    selected={
+                      selection?.instanceId === provider.instanceId &&
+                      selection.model === model.slug
+                    }
+                    separated
+                    disabled={managedModel || !canWrite}
+                    onPress={() =>
+                      write({
+                        antigravityPromptSuggestionModelSelection: {
+                          instanceId: provider.instanceId,
+                          model: model.slug,
+                        },
+                      })
+                    }
+                  />
+                );
+              }),
+            )
+          )}
+        </>
+      ) : null}
+    </SettingsSection>
   );
 }
 

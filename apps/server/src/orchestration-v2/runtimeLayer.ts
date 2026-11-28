@@ -42,6 +42,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadPromptPolishService from "./ThreadPromptPolishService.ts";
+import * as ThreadPromptSuggestionService from "./ThreadPromptSuggestionService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -151,6 +152,15 @@ const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
   Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
 );
 
+const layerThreadPromptSuggestionProvided = ThreadPromptSuggestionService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
+    ),
+  ),
+);
+
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -161,6 +171,7 @@ const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
       layerProviderEventIngestorProvided,
       ProjectionStore.layer,
       ProviderInstallationGate.layer,
+      layerThreadPromptSuggestionProvided,
     ),
   ),
 );

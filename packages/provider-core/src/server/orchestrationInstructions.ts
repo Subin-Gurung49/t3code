@@ -1,6 +1,9 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { McpToolExposureMode } from "./mcpSession.ts";
 
+export const PROMPT_SUGGESTION_PROMPT =
+  "Predict the next message the user will send in this conversation. Reply with only that message, written as the user would type it, in under 20 words. Do not use tools. If there is no clear next step, reply with nothing.";
+
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const t3CodeOrchestrationSections = (nativeSubagents = true): ReadonlyArray<string> => [
   `## T3 Code orchestration

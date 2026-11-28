@@ -27,7 +27,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
@@ -369,6 +369,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onFocusEffort?: () => void;
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
+  defaultOption?: {
+    readonly label: string;
+    readonly selected: boolean;
+    readonly disabled?: boolean;
+    readonly onSelect: () => void;
+  };
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -1139,6 +1145,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+
+            {props.defaultOption ? (
+              <button
+                type="button"
+                aria-pressed={props.defaultOption.selected}
+                disabled={props.defaultOption.disabled}
+                className="mx-2 mt-1 flex shrink-0 items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => {
+                  props.defaultOption?.onSelect();
+                  onRequestClose?.();
+                }}
+              >
+                <span className="truncate">{props.defaultOption.label}</span>
+                {props.defaultOption.selected ? <CheckIcon className="size-4 shrink-0" /> : null}
+              </button>
+            ) : null}
 
             <ModelPickerList
               listRef={modelListRef}

@@ -9,14 +9,18 @@ import {
   type PolishPromptResult,
   TextGenerationError,
 } from "@t3tools/contracts";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { resolvePromptTextGenerationModel } from "../textGeneration/promptTextGenerationModel.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import {
+  RECENT_PROMPT_CONTEXT_MESSAGE_COUNT,
+  recentThreadPromptContext,
+} from "./threadPromptContext.ts";
 
 export class ThreadPromptPolishService extends Context.Service<
   ThreadPromptPolishService,
@@ -27,8 +31,6 @@ export class ThreadPromptPolishService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadPromptPolishService") {}
 
-const MAX_POLISH_CONTEXT_CHARS = 8_000;
-const RECENT_MESSAGE_COUNT = 6;
 const isProjectionStoreThreadNotFoundError = Schema.is(
   ProjectionStore.ProjectionStoreThreadNotFoundError,
 );
@@ -69,81 +71,19 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const providerInstance = yield* providerRegistry.getInstance(modelSelection.instanceId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation: "generatePromptPolish",
-            detail: `Failed to inspect provider instance '${modelSelection.instanceId}'.`,
-            cause,
-          }),
-      ),
-    );
-
-    if (!providerInstance || !providerInstance.enabled) {
-      return yield* new TextGenerationError({
-        operation: "generatePromptPolish",
-        detail: `Configured prompt polish provider '${modelSelection.instanceId}' is disabled or unavailable. No fallback is configured.`,
-      });
-    }
-
-    const snapshot = yield* providerInstance.snapshot.getSnapshot.pipe(
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation: "generatePromptPolish",
-            detail: `Failed to inspect snapshot for provider instance '${modelSelection.instanceId}'.`,
-            cause,
-          }),
-      ),
-    );
-
-    if (snapshot.availability === "unavailable" || !snapshot.enabled) {
-      return yield* new TextGenerationError({
-        operation: "generatePromptPolish",
-        detail: `Configured prompt polish provider '${modelSelection.instanceId}' is disabled or unavailable. No fallback is configured.`,
-      });
-    }
-
-    if (snapshot.auth.status !== "authenticated") {
-      return yield* new TextGenerationError({
-        operation: "generatePromptPolish",
-        detail: `Configured prompt polish provider '${modelSelection.instanceId}' is not authenticated.`,
-      });
-    }
-
-    if (snapshot.driver === "codex") {
-      if (snapshot.auth.type !== "chatgpt") {
-        return yield* new TextGenerationError({
-          operation: "generatePromptPolish",
-          detail: `Codex prompt polish requires an authenticated ChatGPT subscription (got '${snapshot.auth.type ?? "none"}'). API key authentication is not supported.`,
-        });
-      }
-    } else if (snapshot.driver === "opencode") {
-      const selectedModel = snapshot.models.find((m) => m.slug === modelSelection.model);
-      const isGo =
-        modelSelection.model.startsWith("opencode-go/") ||
-        selectedModel?.subProvider === "OpenCode Go" ||
-        selectedModel?.slug.startsWith("opencode-go/");
-      if (!isGo) {
-        return yield* new TextGenerationError({
-          operation: "generatePromptPolish",
-          detail: `OpenCode prompt polish requires an OpenCode Go subscription model path (got '${modelSelection.model}').`,
-        });
-      }
-    } else {
-      return yield* new TextGenerationError({
-        operation: "generatePromptPolish",
-        detail: `Prompt polish driver '${snapshot.driver}' is not supported. Only verified drivers with tool isolation (codex, opencode) are allowed.`,
-      });
-    }
+    yield* resolvePromptTextGenerationModel({
+      registry: providerRegistry,
+      modelSelection,
+      operation: "generatePromptPolish",
+      label: "prompt polish",
+    });
 
     let threadContext: string | undefined = undefined;
     if (input.threadId) {
       const historySnapshot = yield* threads
         .getThreadSnapshotWindow(input.threadId, {
           rowLimit: 30,
-          userTurnLimit: RECENT_MESSAGE_COUNT,
+          userTurnLimit: RECENT_PROMPT_CONTEXT_MESSAGE_COUNT,
         })
         .pipe(
           // Older mobile clients send a draft ID before the server creates the thread.
@@ -163,35 +103,7 @@ const make = Effect.gen(function* () {
           ),
         );
 
-      const recentMessages = (historySnapshot?.projection.messages ?? [])
-        .filter((msg) => !msg.streaming && (msg.role === "user" || msg.role === "assistant"))
-        .slice(-RECENT_MESSAGE_COUNT);
-
-      const budgetParts: string[] = [];
-      let totalChars = 0;
-      for (let i = recentMessages.length - 1; i >= 0; i--) {
-        const msg = recentMessages[i]!;
-        const text = assistantCitationsToPlainText(msg.text).trim();
-        if (text.length === 0) continue;
-        const entry = `${msg.role.toUpperCase()}: ${text}`;
-        const additionalChars = budgetParts.length === 0 ? entry.length : entry.length + 2;
-        if (totalChars + additionalChars > MAX_POLISH_CONTEXT_CHARS) {
-          const prefix = `${msg.role.toUpperCase()}: [earlier text omitted] `;
-          const remaining =
-            MAX_POLISH_CONTEXT_CHARS -
-            totalChars -
-            (budgetParts.length > 0 ? 2 : 0) -
-            prefix.length;
-          if (remaining > 0) budgetParts.unshift(prefix + text.slice(-remaining));
-          break;
-        }
-        budgetParts.unshift(entry);
-        totalChars += additionalChars;
-      }
-
-      if (budgetParts.length > 0) {
-        threadContext = budgetParts.join("\n\n");
-      }
+      threadContext = recentThreadPromptContext(historySnapshot?.projection.messages ?? []);
     }
 
     const occurrences = collectComposerContextReferences(input.draft);

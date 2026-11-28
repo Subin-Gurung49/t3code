@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { PROMPT_SUGGESTION_PROMPT } from "./orchestrationInstructions.ts";
 
 import { decodeJsonReply, fromRunner } from "./textGenerationOperations.ts";
 
@@ -26,3 +27,37 @@ it.effect("fails a thread title reply that is only the schema key", () =>
     assert.strictEqual(outcome.operation, "generateThreadTitle");
   }),
 );
+
+it.effect("generates a next-prompt suggestion with the selected model and thread context", () => {
+  let capturedOperation: string | undefined;
+  let capturedModel: typeof modelSelection | undefined;
+  let capturedPrompt: string | undefined;
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("opencode"),
+    model: "opencode-go/deepseek-v4.1-flash",
+  };
+  const textGeneration = fromRunner("Stub", (request) => {
+    capturedOperation = request.operation;
+    capturedModel = request.modelSelection;
+    capturedPrompt = request.prompt;
+    return decodeJsonReply(
+      request,
+      "Stub",
+      JSON.stringify({ suggestion: "Run the focused tests" }),
+    );
+  });
+
+  return Effect.gen(function* () {
+    const result = yield* textGeneration.generatePromptSuggestion({
+      cwd: "/tmp/suggestion",
+      threadContext: "USER: Fix the parser\n\nASSISTANT: The parser now handles empty input.",
+      modelSelection,
+    });
+
+    assert.strictEqual(result.suggestion, "Run the focused tests");
+    assert.strictEqual(capturedOperation, "generatePromptSuggestion");
+    assert.deepEqual(capturedModel, modelSelection);
+    assert.include(capturedPrompt, PROMPT_SUGGESTION_PROMPT);
+    assert.include(capturedPrompt, "ASSISTANT: The parser now handles empty input.");
+  });
+});

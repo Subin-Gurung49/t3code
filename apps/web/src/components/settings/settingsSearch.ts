@@ -589,6 +589,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta tab autocomplete predict next message claude codex ghost text")],
   },
   {
+    id: "antigravity-suggestion-model",
+    title: msg("Antigravity suggestion model"),
+    to: "/settings/labs",
+    // Hidden until suggestions are on, so search lands on the switch that turns them on.
+    targetId: "prompt-suggestions-beta",
+    scope: "environment",
+    searchTerms: [
+      msg("antigravity suggest next prompt text generation model quota deepseek opencode go"),
+    ],
+  },
+  {
     id: "simlock-hosts",
     title: msg("Simlock device hosts (alpha)"),
     to: "/settings/labs",

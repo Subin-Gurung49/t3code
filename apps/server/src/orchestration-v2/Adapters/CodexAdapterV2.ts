@@ -7,6 +7,7 @@ import {
   revertCodexThreadFromKnownTurns,
 } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { PROMPT_SUGGESTION_PROMPT } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -343,8 +344,7 @@ const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
 const CODEX_INITIALIZE_TIMEOUT = "30 seconds";
 const CodexThreadSampleResponse = Schema.Struct({ text: Schema.NullOr(Schema.String) });
 const decodeCodexThreadSampleResponse = Schema.decodeUnknownEffect(CodexThreadSampleResponse);
-export const CODEX_PROMPT_SUGGESTION_PROMPT =
-  "Predict the next message the user will send in this conversation. Reply with only that message, written as the user would type it, in under 20 words. Do not use tools. If there is no clear next step, reply with nothing.";
+export const CODEX_PROMPT_SUGGESTION_PROMPT = PROMPT_SUGGESTION_PROMPT;
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
