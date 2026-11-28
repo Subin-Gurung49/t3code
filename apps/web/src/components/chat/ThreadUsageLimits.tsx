@@ -359,7 +359,7 @@ export function ThreadUsageLimits({ environmentId }: { readonly environmentId: E
     setIsRefreshing(true);
     try {
       const result = await refreshUsageLimits(environmentId, () =>
-        refreshProviders({ environmentId, input: {} }),
+        refreshProviders({ environmentId, input: { limitsOnly: true } }),
       );
       if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);

@@ -2608,6 +2608,16 @@ export const layerWsRpc = (
               yield* providerRegistry.refreshModelCatalog;
               return { providers: [] };
             }
+            if (input.limitsOnly === true) {
+              yield* Effect.all(
+                [
+                  input.instanceId === undefined ? usageLimitSources.refresh : Effect.void,
+                  providerRegistry.refreshUsageLimits(input.instanceId),
+                ],
+                { concurrency: "unbounded", discard: true },
+              );
+              return { providers: [] };
+            }
             if (input.refreshModels) {
               yield* providerRegistry.invalidateModelCaches({
                 instanceId: input.instanceId,
@@ -2622,12 +2632,6 @@ export const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
-            const usageRefresh =
-              input.instanceId === undefined &&
-              input.cwd === undefined &&
-              input.refreshModels !== true &&
-              input.reloadSecrets !== true &&
-              input.fresh !== true;
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
@@ -2639,9 +2643,7 @@ export const layerWsRpc = (
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
-                  : usageRefresh
-                    ? providerRegistry.refreshUsage
-                    : providerRegistry.refresh();
+                  : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {
